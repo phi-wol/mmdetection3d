@@ -13,6 +13,7 @@ from .pgd_head import PGDHead
 from .point_rpn_head import PointRPNHead
 from .shape_aware_head import ShapeAwareHead
 from .smoke_mono3d_head import SMOKEMono3DHead
+from .smoke_mono3d_head_objectron import SMOKEMono3DHeadObjectron
 from .ssd_3d_head import SSD3DHead
 from .vote_head import VoteHead
 
