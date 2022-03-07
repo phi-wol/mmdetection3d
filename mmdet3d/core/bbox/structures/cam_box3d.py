@@ -31,17 +31,19 @@ class CameraInstance3DBoxes(BaseInstance3DBoxes):
     Attributes:
         tensor (torch.Tensor): Float matrix in shape (N, box_dim).
         box_dim (int): Integer indicating the dimension of a box
-            Each row is (x, y, z, x_size, y_size, z_size, yaw, ...).
+            Each row is (x, y, z, x_size, y_size, z_size, pitch, yaw, roll).
         with_yaw (bool): If True, the value of yaw will be set to 0 as
             axis-aligned boxes tightly enclosing the original boxes.
     """
+    X_AXIS = 0 # Pitch
     YAW_AXIS = 1
+    Z_AXIS = 2 # Roll
 
     def __init__(self,
                  tensor,
                  box_dim=7,
                  with_yaw=True,
-                 origin=(0.5, 1.0, 0.5)):
+                 origin=(0.5, 0.5, 0.5)):
         if isinstance(tensor, torch.Tensor):
             device = tensor.device
         else:
@@ -67,8 +69,8 @@ class CameraInstance3DBoxes(BaseInstance3DBoxes):
             self.with_yaw = with_yaw
         self.tensor = tensor.clone()
 
-        if origin != (0.5, 1.0, 0.5):
-            dst = self.tensor.new_tensor((0.5, 1.0, 0.5))
+        if origin != (0.5, 0.5, 0.5):
+            dst = self.tensor.new_tensor((0.5, 0.5, 0.5))
             src = self.tensor.new_tensor(origin)
             self.tensor[:, :3] += self.tensor[:, 3:6] * (dst - src)
 
@@ -145,14 +147,32 @@ class CameraInstance3DBoxes(BaseInstance3DBoxes):
         corners_norm = torch.from_numpy(
             np.stack(np.unravel_index(np.arange(8), [2] * 3), axis=1)).to(
                 device=dims.device, dtype=dims.dtype)
-
         corners_norm = corners_norm[[0, 1, 3, 2, 4, 5, 7, 6]]
         # use relative origin [0.5, 1, 0.5]
-        corners_norm = corners_norm - dims.new_tensor([0.5, 1, 0.5])
+        corners_norm = corners_norm - dims.new_tensor([0.5, 0.5, 0.5])
         corners = dims.view([-1, 1, 3]) * corners_norm.reshape([1, 8, 3])
+ 
+        # if we use the two additional rotation angles, roll & pitch
+        # convention
 
-        corners = rotation_3d_in_axis(
-            corners, self.tensor[:, 6], axis=self.YAW_AXIS)
+        if self.box_dim == 9: #xyz convention
+            # pitch: x
+            #print("Angle: ", self.tensor[:, 6])
+            #print("Axis: ", self.X_AXIS)
+            corners = rotation_3d_in_axis(
+                corners, self.tensor[:, 6], axis=self.X_AXIS) #), clockwise=True)
+            # yaw: y
+            corners = rotation_3d_in_axis(
+                corners, self.tensor[:, 7], axis=self.YAW_AXIS)
+            # roll: z
+            corners = rotation_3d_in_axis(
+                corners, self.tensor[:, 8], axis=self.Z_AXIS)
+            # print("RotZ: ",corners)
+        else:
+            # only rotate around the yaw-axis
+            corners = rotation_3d_in_axis(
+                corners, self.tensor[:, 6], axis=self.YAW_AXIS)
+        # translation
         corners += self.tensor[:, :3].view(-1, 1, 3)
         return corners
 
