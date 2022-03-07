@@ -1,0 +1,19 @@
+# docker-compose.yml 
+version: "2.4"
+
+services:
+  mmdetection3d:
+    # build time
+    image: mmdetection3d
+    build:
+      context: .
+
+    # run time
+    runtime: nvidia # {nvidia | runc}
+    shm_size: 4gb
+    volumes: 
+    # /home/ubuntu/mmdetection3d/
+      #- ${PWD}/data:/Users/philipp.wolters/code/semantic_perception/data
+      - /home/ubuntu/transfer_mount/kitti_output:${PWD}/kitti_output
+      - /home/ubuntu/transfer_mount/checkpoints:${PWD}/checkpoints
+      # /Users/philipp.wolters/code/semantic_perception/checkpoints
