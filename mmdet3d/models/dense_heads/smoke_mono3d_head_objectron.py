@@ -1,4 +1,5 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+from mmdet3d.core.bbox.structures.utils import yaw2local
 import torch
 from torch.nn import functional as F
 
@@ -108,8 +109,20 @@ class SMOKEMono3DHeadObjectron(AnchorFreeMono3DHead):
         offset_dims = bbox_pred[:, self.dim_channel, ...]
         bbox_pred[:, self.dim_channel, ...] = offset_dims.sigmoid() - 0.5
         # (N, C, H, W)
-        vector_ori = bbox_pred[:, self.ori_channel, ...]
-        bbox_pred[:, self.ori_channel, ...] = F.normalize(vector_ori)
+        # vector_ori = bbox_pred[:, self.ori_channel, ...] # rotational regression output
+        # bbox_pred[:, self.ori_channel, ...] = F.normalize(vector_ori)
+
+        vector_roll = bbox_pred[:, self.ori_channel[0:2], ...]
+        vector_yaw = bbox_pred[:, self.ori_channel[2:4], ...]
+        vector_pitch = bbox_pred[:, self.ori_channel[4:6], ...]
+
+        # normalize roll
+        bbox_pred[:, self.ori_channel[0:2], ...] = F.normalize(vector_roll)
+        # normalize yaw
+        bbox_pred[:, self.ori_channel[2:4], ...] = F.normalize(vector_yaw)
+        # normalize pitch
+        bbox_pred[:, self.ori_channel[4:6], ...] = F.normalize(vector_pitch)
+
         return cls_score, bbox_pred
 
     def get_bboxes(self, cls_scores, bbox_preds, img_metas, rescale=None):
@@ -209,7 +222,7 @@ class SMOKEMono3DHeadObjectron(AnchorFreeMono3DHead):
         batch_scores, batch_index, batch_topk_labels = batch_dets
 
         regression = transpose_and_gather_feat(reg_pred, batch_index)
-        regression = regression.view(-1, 8)
+        regression = regression.view(-1, 12) # changed from 8 to 12 to account for the additional 4 roation vector parameter
 
         points = torch.cat([topk_xs.view(-1, 1),
                             topk_ys.view(-1, 1).float()],
@@ -329,7 +342,7 @@ class SMOKEMono3DHeadObjectron(AnchorFreeMono3DHead):
               - gt_dims (Tensor): Dimensions of each 3D box.
                     shape (N, 3)
               - gt_yaws (Tensor): Orientation(yaw) of each 3D box.
-                    shape (N, 1)
+                    shape (N, 3) # TODO: changed to 3 to account for all dimensions
               - gt_cors (Tensor): Coords of the corners of each 3D box.
                     shape (N, 8, 3)
         """
@@ -409,7 +422,7 @@ class SMOKEMono3DHeadObjectron(AnchorFreeMono3DHead):
         gt_dimensions = torch.cat(
             [gt_bbox_3d.tensor[:, 3:6] for gt_bbox_3d in gt_bboxes_3d])
         gt_orientations = torch.cat([
-            gt_bbox_3d.tensor[:, 6].unsqueeze(-1)
+            gt_bbox_3d.tensor[:, 6:9]# .unsqueeze(-1) # TODO: accounted for dimensionality change
             for gt_bbox_3d in gt_bboxes_3d
         ])
         gt_corners = torch.cat(

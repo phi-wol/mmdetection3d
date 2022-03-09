@@ -36,7 +36,7 @@ __all__ = [
     'LoadPointsFromFile', 'S3DISSegDataset', 'S3DISDataset',
     'NormalizePointsColor', 'IndoorPatchPointSample', 'IndoorPointSample',
     'PointSample', 'LoadAnnotations3D', 'GlobalAlignment', 'SUNRGBDDataset',
-    'ScanNetDataset', 'ScanNetSegDataset', 'SemanticKITTIDataset',
+    'ScanNetDataset', 'ScanNetSegDataset', 'SemanticKITTIDataset', 'KittiMonoDatasetObjectron', 
     'Custom3DDataset', 'Custom3DSegDataset', 'LoadPointsFromMultiSweeps',
     'WaymoDataset', 'BackgroundPointsFilter', 'VoxelBasedPointSampler',
     'get_loading_pipeline', 'RandomDropPointsColor', 'RandomJitterPoints',

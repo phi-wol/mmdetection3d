@@ -110,7 +110,7 @@ class AnchorFreeMono3DHead(BaseMono3DDenseHead):
             num_attrs=9,  # For nuscenes
             pred_velo=False,
             pred_bbox2d=False,
-            group_reg_dims=(2, 1, 3, 1, 2),  # offset, depth, size, rot, velo,
+            group_reg_dims=(2, 1, 3, 3, 2),  # offset, depth, size, rot, velo, #TODO: Change dimensionality of rotational regression output
             cls_branch=(128, 64),
             reg_branch=(
                 (128, 64),  # offset

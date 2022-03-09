@@ -514,6 +514,102 @@ def test_smoke_mono3d_head():
     assert results[0][3] is None
 
 
+def test_objectron_mono3d_head():
+
+    num_classes = 1
+    head_cfg = dict(
+        type='SMOKEMono3DHeadObjectron',
+        num_classes=num_classes,
+        in_channels=64,
+        dim_channel=[3, 4, 5],
+        ori_channel=[6, 7, 8, 9, 10, 11],
+        stacked_convs=0,
+        feat_channels=64,
+        use_direction_classifier=False,
+        diff_rad_by_sin=False,
+        pred_attrs=False,
+        pred_velo=False,
+        dir_offset=0,
+        strides=None,
+        group_reg_dims=(12, ),
+        cls_branch=(256, ),
+        reg_branch=((256, ), ),
+        num_attrs=0,
+        bbox_code_size=9,
+        dir_branch=(),
+        attr_branch=(),
+        bbox_coder=dict(
+            type='SMOKECoderObjectron', #TODO: new box coder
+            base_depth=(28.01, 16.32), #Hyperparameter
+            base_dims=((0.50999998, 0.8281818,  0.51636363),), # for now only dummy chair dims
+            code_size=9),
+        loss_cls=dict(type='GaussianFocalLoss', loss_weight=1.0),
+        loss_bbox=dict(type='L1Loss', reduction='sum', loss_weight=1 / 300),
+        loss_dir=dict(
+            type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0),
+        loss_attr=None,
+        conv_bias=True,
+        dcn_on_last_conv=False)
+
+    self = build_head(head_cfg)
+
+    feats = [torch.rand([2, 64, 32, 32], dtype=torch.float32)]
+
+    # test forward
+    ret_dict = self(feats)
+
+    assert len(ret_dict) == 2
+    assert len(ret_dict[0]) == 1
+    assert ret_dict[0][0].shape == torch.Size([2, num_classes, 32, 32])
+    assert ret_dict[1][0].shape == torch.Size([2, 12, 32, 32]) # 12 regression outputs
+
+    # test loss
+    gt_bboxes = [
+        torch.Tensor([[1.0, 2.0, 20.0, 40.0], [45.0, 50.0, 80.0, 70.1],
+                      [34.0, 39.0, 65.0, 64.0]]),
+        torch.Tensor([[11.0, 22.0, 29.0, 31.0], [41.0, 55.0, 60.0, 99.0],
+                      [29.0, 29.0, 65.0, 56.0]])
+    ]
+    gt_bboxes_3d = [
+        CameraInstance3DBoxes(torch.rand([3, 9]), box_dim=9),
+        CameraInstance3DBoxes(torch.rand([3, 9]), box_dim=9)
+    ]
+    gt_labels = [torch.randint(0, num_classes, [3]) for i in range(2)]
+    gt_labels_3d = gt_labels
+    centers2d = [torch.randint(0, 60, (3, 2)), torch.randint(0, 40, (3, 2))]
+    depths = [
+        torch.rand([3], dtype=torch.float32),
+        torch.rand([3], dtype=torch.float32)
+    ]
+    attr_labels = None
+    img_metas = [
+        dict(
+            cam2img=[[1260.8474446004698, 0.0, 807.968244525554, 40.1111],
+                     [0.0, 1260.8474446004698, 495.3344268742088, 2.34422],
+                     [0.0, 0.0, 1.0, 0.00333333], [0.0, 0.0, 0.0, 1.0]],
+            scale_factor=np.array([1., 1., 1., 1.], dtype=np.float32),
+            pad_shape=[128, 128],
+            trans_mat=np.array([[0.25, 0., 0.], [0., 0.25, 0], [0., 0., 1.]],
+                               dtype=np.float32),
+            affine_aug=False,
+            box_type_3d=CameraInstance3DBoxes) for i in range(2)
+    ]
+    losses = self.loss(*ret_dict, gt_bboxes, gt_labels, gt_bboxes_3d,
+                       gt_labels_3d, centers2d, depths, attr_labels, img_metas)
+
+    assert losses['loss_cls'] >= 0
+    assert losses['loss_bbox'] >= 0
+
+    # test get_boxes
+    results = self.get_bboxes(*ret_dict, img_metas)
+    assert len(results) == 2
+    assert len(results[0]) == 4
+    assert results[0][0].tensor.shape == torch.Size([100, 9])
+    assert results[0][1].shape == torch.Size([100])
+    assert results[0][2].shape == torch.Size([100])
+    assert results[0][3] is None
+
+
 def test_parta2_bbox_head():
     parta2_bbox_head_cfg = _get_parta2_bbox_head_cfg(
         './parta2/hv_PartA2_secfpn_2x8_cyclic_80e_kitti-3d-3class.py')

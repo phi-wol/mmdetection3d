@@ -7,7 +7,7 @@ from mmdet.core.bbox.builder import BBOX_CODERS
 
 
 @BBOX_CODERS.register_module()
-class SMOKECoder(BaseBBoxCoder):
+class SMOKECoderObjectron(BaseBBoxCoder):
     """Bbox Coder for SMOKE.
 
     Args:
@@ -18,7 +18,7 @@ class SMOKECoder(BaseBBoxCoder):
     """
 
     def __init__(self, base_depth, base_dims, code_size):
-        super(SMOKECoder, self).__init__()
+        super(SMOKECoderObjectron, self).__init__()
         self.base_depth = base_depth
         self.base_dims = base_dims
         self.bbox_code_size = code_size
@@ -89,7 +89,7 @@ class SMOKECoder(BaseBBoxCoder):
         depth_offsets = reg[:, 0]
         centers2d_offsets = reg[:, 1:3]
         dimensions_offsets = reg[:, 3:6]
-        orientations = reg[:, 6:8]
+        orientations = reg[:, 6:12] # orientations are each encoded with cos & sin: 3 angles -> 6 dim vector
         depths = self._decode_depth(depth_offsets)
         # get the 3D Bounding box's center location.
         pred_locations = self._decode_location(points, centers2d_offsets,
@@ -172,37 +172,52 @@ class SMOKECoder(BaseBBoxCoder):
         """Retrieve object orientation.
 
         Args:
-            ori_vector (Tensor): Local orientation in [sin, cos] format.
-                shape: (N, 2)
+            ori_vector (Tensor): Local orientation in [sin, cos]*3 format.
+                shape: (N, 6)
             locations (Tensor): Object location.
                 shape: (N, 3)
 
         Return:
-            Tensor: yaw(Orientation). Notice that the yaw's
+            Tensor: euler(Orientation). Notice that the euler's
                 range is [-np.pi, np.pi].
-                shape：(N, 1）
+                shape：(N, 3） 
         """
         assert len(ori_vector) == len(locations)
-        locations = locations.view(-1, 3)
-        rays = torch.atan(locations[:, 0] / (locations[:, 2] + 1e-7))
-        alphas = torch.atan(ori_vector[:, 0] / (ori_vector[:, 1] + 1e-7))
+        # locations = locations.view(-1, 3)
+        #rays = torch.atan(locations[:, 0] / (locations[:, 2] + 1e-7))
+        # directly regress coordinates, no local transformation
+        roll = torch.atan(ori_vector[:, 0] / (ori_vector[:, 1] + 1e-7))
+        yaw = torch.atan(ori_vector[:, 2] / (ori_vector[:, 3] + 1e-7))
+        pitch = torch.atan(ori_vector[:, 4] / (ori_vector[:, 5] + 1e-7))
 
-        # get cosine value positive and negative index.
-        cos_pos_inds = (ori_vector[:, 1] >= 0).nonzero(as_tuple=False)
-        cos_neg_inds = (ori_vector[:, 1] < 0).nonzero(as_tuple=False)
+        # get cosine value positive and negative index. 
+        roll_cos_pos_inds = (ori_vector[:, 1] >= 0).nonzero(as_tuple=False)
+        roll_cos_neg_inds = (ori_vector[:, 1] < 0).nonzero(as_tuple=False)
+        roll[roll_cos_pos_inds] -= np.pi / 2
+        roll[roll_cos_neg_inds] += np.pi / 2
 
-        alphas[cos_pos_inds] -= np.pi / 2
-        alphas[cos_neg_inds] += np.pi / 2
+        yaw_cos_pos_inds = (ori_vector[:, 3] >= 0).nonzero(as_tuple=False)
+        yaw_cos_neg_inds = (ori_vector[:, 3] < 0).nonzero(as_tuple=False)
+        yaw[yaw_cos_pos_inds] -= np.pi / 2
+        yaw[yaw_cos_neg_inds] += np.pi / 2
+
+        roll_cos_pos_inds = (ori_vector[:, 5] >= 0).nonzero(as_tuple=False)
+        roll_cos_neg_inds = (ori_vector[:, 5] < 0).nonzero(as_tuple=False)
+        roll[roll_cos_pos_inds] -= np.pi / 2
+        roll[roll_cos_neg_inds] += np.pi / 2
+        
         # retrieve object rotation y angle.
-        yaws = alphas + rays
+        #yaws = alphas + rays
 
-        larger_inds = (yaws > np.pi).nonzero(as_tuple=False)
-        small_inds = (yaws < -np.pi).nonzero(as_tuple=False)
+        euler_angles = torch.cat((roll.unsqueeze(-1), yaw.unsqueeze(-1), pitch.unsqueeze(-1)), dim=1)
+
+        larger_inds = (euler_angles > np.pi).nonzero(as_tuple=False)
+        small_inds = (euler_angles < -np.pi).nonzero(as_tuple=False)
 
         if len(larger_inds) != 0:
-            yaws[larger_inds] -= 2 * np.pi
+            euler_angles[larger_inds] -= 2 * np.pi
         if len(small_inds) != 0:
-            yaws[small_inds] += 2 * np.pi
+            euler_angles[small_inds] += 2 * np.pi
 
-        yaws = yaws.unsqueeze(-1)
-        return yaws
+        # yaws = yaws.unsqueeze(-1)
+        return euler_angles

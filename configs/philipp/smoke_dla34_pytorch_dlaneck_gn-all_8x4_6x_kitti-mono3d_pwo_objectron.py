@@ -1,17 +1,14 @@
 _base_ = [
-    '../configs/_base_/datasets/kitti-mono3d.py', '../configs/_base_/models/smoke.py',
-    '../configs/_base_/default_runtime.py'
+    './kitti-mono3d_objectron.py', '../configs/_base_/default_runtime.py' #'../configs/_base_/models/smoke.py' already copied below
 ]
 
-# Example: # testing new folders:
-# data_root = 'data/kitti/' #TODO: Change
-# ann_file = data_root + 'kitti_infos_val_mono3d.coco.json' # defines 'LoadImageFromFileMono3D' & 'LoadAnnotations3D'
-# info_file = data_root + 'kitti_infos_val.pkl'
-
 # testing new folders:
-data_root = 'input/input_2022-02-18/' #TODO: Change
-ann_file = data_root + 'annotation.json' # defines 'LoadImageFromFileMono3D' & 'LoadAnnotations3D'
-info_file = data_root + 'infos.pkl'
+data_root = "input/objectron_processed_chair"
+ann_file_test=data_root + '/annotations/objectron_test.json', # defines 'LoadImageFromFileMono3D' & 'LoadAnnotations3D'
+# info_file = data_root + 'infos.pkl'
+
+# scale = (1920, 1440) # original resolution
+scale = (960, 720) # size_divisor = 2
 
 # optimizer
 optimizer = dict(type='Adam', lr=2.5e-4)
@@ -23,11 +20,11 @@ runner = dict(type='EpochBasedRunner', max_epochs=72)
 log_config = dict(interval=10)
 
 find_unused_parameters = True
-class_names = ['Pedestrian', 'Cyclist', 'Car'] # TODO: only cars?
+class_names = ["chair"] # TODO: single class?
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True) #TODO: Change on images from different distribution?
 
-dataset_type = 'KittiMonoDataset'
+dataset_type = 'KittiMonoDatasetObjectron' # TODO: new dataset? change loading and evaluation procedure
 input_modality = dict(use_lidar=False, use_camera=True)
 
 train_pipeline = [
@@ -42,7 +39,7 @@ train_pipeline = [
         with_bbox_depth=True),
     dict(type='RandomFlip3D', flip_ratio_bev_horizontal=0.5),
     dict(type='RandomShiftScale', shift_scale=(0.2, 0.4), aug_prob=0.3),
-    dict(type='AffineResize', img_scale=(1280, 384), down_ratio=4),
+    dict(type='AffineResize', img_scale=scale, down_ratio=4),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='Pad', size_divisor=32),
     dict(type='DefaultFormatBundle3D', class_names=class_names),
@@ -57,10 +54,10 @@ test_pipeline = [
     dict(type='LoadImageFromFileMono3D'),
     dict(
         type='MultiScaleFlipAug',
-        img_scale=(1280, 384),
+        img_scale=scale,
         flip=False,
         transforms=[
-            dict(type='AffineResize', img_scale=(1280, 384), down_ratio=4), # TODO: just leave out, when providing perfectly sized images?
+            dict(type='AffineResize', img_scale=scale, down_ratio=4), # TODO: just leave out, when providing perfectly sized images?
             dict(type='Normalize', **img_norm_cfg),
             dict(type='Pad', size_divisor=32),
             dict(
@@ -78,10 +75,64 @@ data = dict(
     test=dict(
         type=dataset_type,
         data_root=data_root,
-        ann_file=ann_file,
+        ann_file=ann_file_test,
+        # info_file=info_file,
         img_prefix=data_root,
         classes=class_names,
         pipeline=test_pipeline, # TODO: Change?
         modality=input_modality,
         test_mode=True,
         box_type_3d='Camera'))
+
+model = dict(
+    type='SMOKEMono3D', 
+    backbone=dict(
+        type='DLANet',
+        depth=34,
+        in_channels=3,
+        norm_cfg=dict(type='GN', num_groups=32),
+        init_cfg=dict(
+            type='Pretrained',
+            checkpoint='http://dl.yf.io/dla/models/imagenet/dla34-ba72cf86.pth'
+        )),
+    neck=dict(
+        type='DLANeck',
+        in_channels=[16, 32, 64, 128, 256, 512],
+        start_level=2,
+        end_level=5,
+        norm_cfg=dict(type='GN', num_groups=32)),
+    bbox_head=dict(
+        type='SMOKEMono3DHeadObjectron', #TODO: new head
+        num_classes=1, # TODO: focus on single class overfit
+        in_channels=64,
+        dim_channel=[3, 4, 5],
+        ori_channel=[6, 7, 8, 9, 10, 11], # added new ori channels
+        stacked_convs=0,
+        feat_channels=64,
+        use_direction_classifier=False,
+        diff_rad_by_sin=False,
+        pred_attrs=False,
+        pred_velo=False,
+        dir_offset=0,
+        strides=None,
+        group_reg_dims=(12, ), # changed from 8 to 12: this parameter influences number of regression output channels
+        cls_branch=(256, ),
+        reg_branch=((256, ), ),
+        num_attrs=0,
+        bbox_code_size=9, # for 2 additional orientation angles
+        dir_branch=(),
+        attr_branch=(),
+        bbox_coder=dict(
+            type='SMOKECoderObjectron', #TODO: new box coder
+            base_depth=(28.01, 16.32), #Hyperparameter
+            base_dims=((0.50999998, 0.8281818,  0.51636363),), # for now only dummy chair dims
+            code_size=9),
+        loss_cls=dict(type='GaussianFocalLoss', loss_weight=1.0),
+        loss_bbox=dict(type='L1Loss', reduction='sum', loss_weight=1 / 300),
+        loss_dir=dict(
+            type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0),
+        loss_attr=None,
+        conv_bias=True,
+        dcn_on_last_conv=False),
+    train_cfg=None,
+    test_cfg=dict(topK=100, local_maximum_kernel=3, max_per_img=100))

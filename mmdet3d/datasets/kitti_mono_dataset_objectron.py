@@ -30,7 +30,7 @@ class KittiMonoDatasetObjectron(NuScenesMonoDataset):
         kwargs (dict): Other arguments are the same of NuScenesMonoDataset.
     """
 
-    CLASSES = ('Pedestrian', 'Cyclist', 'Car')
+    CLASSES = ['bike', 'book', 'bottle', 'cereal_box', 'camera', 'chair', 'cup', 'laptop', 'shoe']
 
     def __init__(self,
                  data_root,
@@ -48,7 +48,7 @@ class KittiMonoDatasetObjectron(NuScenesMonoDataset):
             version=version,
             **kwargs)
         self.anno_infos = mmcv.load(info_file)
-        self.bbox_code_size = 7
+        self.bbox_code_size = 9
 
     def _parse_ann_info(self, img_info, ann_info):
         """Parse bbox and mask annotation.
@@ -517,7 +517,7 @@ class KittiMonoDatasetObjectron(NuScenesMonoDataset):
         if len(box_preds) == 0:
             return dict(
                 bbox=np.zeros([0, 4]),
-                box3d_camera=np.zeros([0, 7]),
+                box3d_camera=np.zeros([0, 9]),
                 scores=np.zeros([0]),
                 label_preds=np.zeros([0, 4]),
                 sample_idx=sample_idx)
