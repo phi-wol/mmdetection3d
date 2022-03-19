@@ -286,7 +286,8 @@ class SMOKEMono3DHeadObjectron(AnchorFreeMono3DHead):
         locations, dimensions, orientations = locations[indices], dimensions[
             indices], orientations[indices]
 
-        locations[:, 1] += dimensions[:, 1] / 2
+        # not needed anymore: as bbox center is defined at relative [0.5, 0.5, 0.5] of the unit box
+        # locations[:, 1] += dimensions[:, 1] / 2
 
         gt_locations = gt_locations[indices]
 
@@ -509,6 +510,10 @@ class SMOKEMono3DHeadObjectron(AnchorFreeMono3DHead):
             center2d_heatmap, center2d_heatmap_target, avg_factor=avg_factor)
 
         reg_inds = target_labels['reg_indices']
+        print(target_labels['gt_cors'][reg_inds, ...])
+        print(pred_bboxes['ori'].corners[reg_inds, ...])
+        print(pred_bboxes['dim'].corners[reg_inds, ...])
+        print(pred_bboxes['loc'].corners[reg_inds, ...])
 
         loss_bbox_oris = self.loss_bbox(
             pred_bboxes['ori'].corners[reg_inds, ...],
@@ -523,6 +528,10 @@ class SMOKEMono3DHeadObjectron(AnchorFreeMono3DHead):
             target_labels['gt_cors'][reg_inds, ...])
 
         loss_bbox = loss_bbox_dims + loss_bbox_locs + loss_bbox_oris
+
+        print(loss_bbox_dims)
+        print(loss_bbox_locs)
+        print(loss_bbox_oris)
 
         loss_dict = dict(loss_cls=loss_cls, loss_bbox=loss_bbox)
 

@@ -11,10 +11,11 @@ from .pgd_bbox_coder import PGDBBoxCoder
 from .point_xyzwhlr_bbox_coder import PointXYZWHLRBBoxCoder
 from .smoke_bbox_coder import SMOKECoder
 from .smoke_bbox_coder_objectron import SMOKECoderObjectron
+from .smoke_bbox_coder_objectron_alpha import SMOKECoderObjectronAlpha
 
 __all__ = [
     'build_bbox_coder', 'DeltaXYZWLHRBBoxCoder', 'PartialBinBasedBBoxCoder',
     'CenterPointBBoxCoder', 'AnchorFreeBBoxCoder', 'GroupFree3DBBoxCoder',
     'PointXYZWHLRBBoxCoder', 'FCOS3DBBoxCoder', 'PGDBBoxCoder', 'SMOKECoder',
-    'MonoFlexCoder', 'SMOKECoderObjectron'
+    'MonoFlexCoder', 'SMOKECoderObjectron', 'SMOKECoderObjectronAlpha'
 ]

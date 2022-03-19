@@ -7,7 +7,7 @@ from mmdet.core.bbox.builder import BBOX_CODERS
 
 
 @BBOX_CODERS.register_module()
-class SMOKECoderObjectron(BaseBBoxCoder):
+class SMOKECoderObjectronAlpha(BaseBBoxCoder):
     """Bbox Coder for SMOKE.
 
     Args:
@@ -18,7 +18,7 @@ class SMOKECoderObjectron(BaseBBoxCoder):
     """
 
     def __init__(self, base_depth, base_dims, code_size):
-        super(SMOKECoderObjectron, self).__init__()
+        super(SMOKECoderObjectronAlpha, self).__init__()
         self.base_depth = base_depth
         self.base_dims = base_dims
         self.bbox_code_size = code_size
@@ -183,28 +183,30 @@ class SMOKECoderObjectron(BaseBBoxCoder):
                 shape：(N, 3） 
         """
         assert len(ori_vector) == len(locations)
-        # locations = locations.view(-1, 3)
-        #rays = torch.atan(locations[:, 0] / (locations[:, 2] + 1e-7))
+        locations = locations.view(-1, 3)
+        rays_x = torch.atan(locations[:, 1] / (locations[:, 2] + 1e-7))
+        rays_y = torch.atan(locations[:, 0] / (locations[:, 2] + 1e-7))
+        rays_z = torch.atan(locations[:, 0] / (locations[:, 1] + 1e-7))
         # directly regress coordinates, no local transformation
-        roll = torch.atan(ori_vector[:, 0] / (ori_vector[:, 1] + 1e-7))
-        yaw = torch.atan(ori_vector[:, 2] / (ori_vector[:, 3] + 1e-7))
-        pitch = torch.atan(ori_vector[:, 4] / (ori_vector[:, 5] + 1e-7))
+        roll = torch.atan(ori_vector[:, 0] / (ori_vector[:, 1] + 1e-7)) + rays_x
+        yaw = torch.atan(ori_vector[:, 2] / (ori_vector[:, 3] + 1e-7)) + rays_y
+        pitch = torch.atan(ori_vector[:, 4] / (ori_vector[:, 5] + 1e-7)) + rays_z
 
         # get cosine value positive and negative index. 
-        # roll_cos_pos_inds = (ori_vector[:, 1] >= 0).nonzero(as_tuple=False)
-        # roll_cos_neg_inds = (ori_vector[:, 1] < 0).nonzero(as_tuple=False)
-        # roll[roll_cos_pos_inds] -= np.pi / 2
-        # roll[roll_cos_neg_inds] += np.pi / 2
+        roll_cos_pos_inds = (ori_vector[:, 1] >= 0).nonzero(as_tuple=False)
+        roll_cos_neg_inds = (ori_vector[:, 1] < 0).nonzero(as_tuple=False)
+        roll[roll_cos_pos_inds] -= np.pi / 2
+        roll[roll_cos_neg_inds] += np.pi / 2
 
-        # yaw_cos_pos_inds = (ori_vector[:, 3] >= 0).nonzero(as_tuple=False)
-        # yaw_cos_neg_inds = (ori_vector[:, 3] < 0).nonzero(as_tuple=False)
-        # yaw[yaw_cos_pos_inds] -= np.pi / 2
-        # yaw[yaw_cos_neg_inds] += np.pi / 2
+        yaw_cos_pos_inds = (ori_vector[:, 3] >= 0).nonzero(as_tuple=False)
+        yaw_cos_neg_inds = (ori_vector[:, 3] < 0).nonzero(as_tuple=False)
+        yaw[yaw_cos_pos_inds] -= np.pi / 2
+        yaw[yaw_cos_neg_inds] += np.pi / 2
 
-        # roll_cos_pos_inds = (ori_vector[:, 5] >= 0).nonzero(as_tuple=False)
-        # roll_cos_neg_inds = (ori_vector[:, 5] < 0).nonzero(as_tuple=False)
-        # roll[roll_cos_pos_inds] -= np.pi / 2
-        # roll[roll_cos_neg_inds] += np.pi / 2
+        roll_cos_pos_inds = (ori_vector[:, 5] >= 0).nonzero(as_tuple=False)
+        roll_cos_neg_inds = (ori_vector[:, 5] < 0).nonzero(as_tuple=False)
+        roll[roll_cos_pos_inds] -= np.pi / 2
+        roll[roll_cos_neg_inds] += np.pi / 2
         
         # retrieve object rotation y angle.
         #yaws = alphas + rays

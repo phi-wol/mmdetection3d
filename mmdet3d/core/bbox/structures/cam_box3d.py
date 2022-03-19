@@ -1,4 +1,5 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+from lib2to3.pgen2.pgen import DFAState
 import numpy as np
 import torch
 
@@ -23,7 +24,7 @@ class CameraInstance3DBoxes(BaseInstance3DBoxes):
              v
         down y
 
-    The relative coordinate of bottom center in a CAM box is (0.5, 1.0, 0.5),
+    The relative coordinate of bottom center in a CAM box is (0.5, 0.5, 0.5),
     and the yaw is around the y axis, thus the rotation axis=1.
     The yaw is 0 at the positive direction of x axis, and decreases from
     the positive direction of x to the positive direction of z.
@@ -252,11 +253,17 @@ class CameraInstance3DBoxes(BaseInstance3DBoxes):
         if bev_direction == 'horizontal':
             self.tensor[:, 0::7] = -self.tensor[:, 0::7]
             if self.with_yaw:
-                self.tensor[:, 6] = -self.tensor[:, 6] + np.pi
+                if self.box_dim == 9:
+                    self.tensor[:, 7] = -self.tensor[:, 7] + np.pi
+                else:
+                    self.tensor[:, 6] = -self.tensor[:, 6] + np.pi
         elif bev_direction == 'vertical':
             self.tensor[:, 2::7] = -self.tensor[:, 2::7]
             if self.with_yaw:
-                self.tensor[:, 6] = -self.tensor[:, 6]
+                if self.box_dim == 9:
+                    self.tensor[:, 7] = -self.tensor[:, 7]
+                else:
+                    self.tensor[:, 6] = -self.tensor[:, 6]
 
         if points is not None:
             assert isinstance(points, (torch.Tensor, np.ndarray, BasePoints))
