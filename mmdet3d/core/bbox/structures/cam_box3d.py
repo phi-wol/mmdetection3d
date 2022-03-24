@@ -251,14 +251,14 @@ class CameraInstance3DBoxes(BaseInstance3DBoxes):
         """
         assert bev_direction in ('horizontal', 'vertical')
         if bev_direction == 'horizontal':
-            self.tensor[:, 0::7] = -self.tensor[:, 0::7]
+            self.tensor[:, 0] = -self.tensor[:, 0]
             if self.with_yaw:
                 if self.box_dim == 9:
                     self.tensor[:, 7] = -self.tensor[:, 7] + np.pi
                 else:
                     self.tensor[:, 6] = -self.tensor[:, 6] + np.pi
         elif bev_direction == 'vertical':
-            self.tensor[:, 2::7] = -self.tensor[:, 2::7]
+            self.tensor[:, 2] = -self.tensor[:, 2]
             if self.with_yaw:
                 if self.box_dim == 9:
                     self.tensor[:, 7] = -self.tensor[:, 7]
