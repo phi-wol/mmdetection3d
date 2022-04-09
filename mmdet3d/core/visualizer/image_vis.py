@@ -61,8 +61,10 @@ def project_pts_on_img(points,
 def plot_rect3d_on_img(img,
                        num_rects,
                        rect_corners,
-                       color=(0, 255, 0),
-                       thickness=1):
+                       color=(0, 255, 0), # blue
+                       thickness=1,
+                       color_2 = (50, 170, 255) # light blue
+                       ):
     """Plot the boundary lines of 3D rectangular on 2D images.
 
     Args:
@@ -76,11 +78,17 @@ def plot_rect3d_on_img(img,
     """
     line_indices = ((0, 1), (0, 3), (0, 4), (1, 2), (1, 5), (3, 2), (3, 7),
                     (4, 5), (4, 7), (2, 6), (5, 6), (6, 7))
+    top_indices = ((0,5), (1, 4))
+
     for i in range(num_rects):
-        corners = rect_corners[i].astype(np.int)
+        corners = rect_corners[i].astype(int)
         for start, end in line_indices:
             cv2.line(img, (corners[start, 0], corners[start, 1]),
                      (corners[end, 0], corners[end, 1]), color, thickness,
+                     cv2.LINE_AA)
+        for start, end in top_indices:
+            cv2.line(img, (corners[start, 0], corners[start, 1]),
+                     (corners[end, 0], corners[end, 1]), color_2, thickness,
                      cv2.LINE_AA)
 
     return img.astype(np.uint8)
@@ -170,7 +178,9 @@ def draw_camera_bbox3d_on_img(bboxes3d,
                               cam2img,
                               img_metas,
                               color=(0, 255, 0),
-                              thickness=1):
+                              thickness=1,
+                              color_2 = (50, 170, 255)
+                              ):
     """Project the 3D bbox on 2D plane and draw on input image.
 
     Args:
@@ -203,4 +213,4 @@ def draw_camera_bbox3d_on_img(bboxes3d,
     uv_origin = (uv_origin - 1).round()
     imgfov_pts_2d = uv_origin[..., :2].reshape(num_bbox, 8, 2).numpy()
 
-    return plot_rect3d_on_img(img, num_bbox, imgfov_pts_2d, color, thickness)
+    return plot_rect3d_on_img(img, num_bbox, imgfov_pts_2d, color, thickness, color_2)

@@ -254,7 +254,8 @@ class CameraInstance3DBoxes(BaseInstance3DBoxes):
             self.tensor[:, 0] = -self.tensor[:, 0]
             if self.with_yaw:
                 if self.box_dim == 9:
-                    self.tensor[:, 7] = -self.tensor[:, 7] + np.pi
+                    self.tensor[:, 8] = - self.tensor[:, 8]
+                    self.tensor[:, 7] = - self.tensor[:, 7]
                 else:
                     self.tensor[:, 6] = -self.tensor[:, 6] + np.pi
         elif bev_direction == 'vertical':
