@@ -14,7 +14,7 @@ from .anchor_free_mono3d_head import AnchorFreeMono3DHead
 
 
 @HEADS.register_module()
-class SMOKEMono3DHeadObjectron(AnchorFreeMono3DHead):
+class SMOKEMono3DHeadObjectronEulerX(AnchorFreeMono3DHead):
     r"""Anchor-free head used in `SMOKE <https://arxiv.org/abs/2002.10111>`_
 
     .. code-block:: none
@@ -248,7 +248,7 @@ class SMOKEMono3DHeadObjectron(AnchorFreeMono3DHead):
             gt_dimensions (Tensor): Dimensions of each 3D box.
                 shape (N, 3)
             gt_orientations (Tensor): Orientation(yaw) of each 3D box.
-                shape (N, 1)
+                shape (N, 3)
             indices (Tensor): Indices of the existence of the 3D box.
                 shape (B * max_objs, )
             img_metas (list[dict]): Meta information of each image,
@@ -286,22 +286,40 @@ class SMOKEMono3DHeadObjectron(AnchorFreeMono3DHead):
         locations, dimensions, orientations = locations[indices], dimensions[
             indices], orientations[indices]
 
-        # not needed anymore: as bbox center is defined at relative [0.5, 0.5, 0.5] of the unit box
+        # not needed anymore: as bbox center is defined at relative [0.5, 0.5, 0.5]
         # locations[:, 1] += dimensions[:, 1] / 2
 
         gt_locations = gt_locations[indices]
+        print ("Predcited Location: ", locations)
+        print ("Predicted Orientation: ", orientations)
 
         assert len(locations) == len(gt_locations)
         assert len(dimensions) == len(gt_dimensions)
         assert len(orientations) == len(gt_orientations)
-        bbox3d_yaws = self.bbox_coder.encode(gt_locations, gt_dimensions,
-                                             orientations, img_metas)
+        
+        # disentangle euler angles in three separate rotated boxes, setting the remaining other angles to gt
+        orientations_x = orientations.clone()
+        orientations_x[:, [1,2]] = 0 # gt_orientations[:, [1,2]]
+
+        orientations_y = orientations.clone()
+        orientations_y[:, [0,2]] = gt_orientations[:, [0,2]] 
+
+        orientations_z = orientations.clone()
+        orientations_z[:, [0,1]] = gt_orientations[:, [0,1]]
+        
+        bbox3d_ori_x = self.bbox_coder.encode(gt_locations, gt_dimensions,
+                                             orientations_x, img_metas)
+        bbox3d_ori_y = self.bbox_coder.encode(gt_locations, gt_dimensions,
+                                             orientations_y, img_metas)
+        bbox3d_ori_z = self.bbox_coder.encode(gt_locations, gt_dimensions,
+                                             orientations_z, img_metas)
+
         bbox3d_dims = self.bbox_coder.encode(gt_locations, dimensions,
                                              gt_orientations, img_metas)
         bbox3d_locs = self.bbox_coder.encode(locations, gt_dimensions,
                                              gt_orientations, img_metas)
 
-        pred_bboxes = dict(ori=bbox3d_yaws, dim=bbox3d_dims, loc=bbox3d_locs)
+        pred_bboxes = dict(ori_x=bbox3d_ori_x , ori_y=bbox3d_ori_y, ori_z=bbox3d_ori_z, dim=bbox3d_dims, loc=bbox3d_locs)
 
         return pred_bboxes
 
@@ -428,7 +446,18 @@ class SMOKEMono3DHeadObjectron(AnchorFreeMono3DHead):
         ])
         gt_corners = torch.cat(
             [gt_bbox_3d.corners for gt_bbox_3d in gt_bboxes_3d])
+        
 
+        gt_orientations_x = gt_orientations.clone()
+        gt_orientations_x[:, [1,2]] = 0
+
+        bbox3d_ori_x = self.bbox_coder.encode(batch_gt_locations, gt_dimensions,
+                                             gt_orientations_x, img_metas)
+        
+        # gt_corners_x = torch.cat(
+        #     [bbox3d.corners for bbox3d in bbox3d_ori_x])
+
+        
         target_labels = dict(
             gt_centers2d=batch_centers2d.long(),
             gt_labels3d=batch_labels_3d,
@@ -437,7 +466,8 @@ class SMOKEMono3DHeadObjectron(AnchorFreeMono3DHead):
             gt_locs=batch_gt_locations,
             gt_dims=gt_dimensions,
             gt_yaws=gt_orientations,
-            gt_cors=gt_corners)
+            gt_cors=gt_corners,
+            gt_cors_x = bbox3d_ori_x)
 
         return center_heatmap_target, avg_factor, target_labels
 
@@ -510,14 +540,25 @@ class SMOKEMono3DHeadObjectron(AnchorFreeMono3DHead):
             center2d_heatmap, center2d_heatmap_target, avg_factor=avg_factor)
 
         reg_inds = target_labels['reg_indices']
-        # print(target_labels['gt_cors'][reg_inds, ...])
-        # print(pred_bboxes['ori'].corners[reg_inds, ...])
-        # print(pred_bboxes['dim'].corners[reg_inds, ...])
-        # print(pred_bboxes['loc'].corners[reg_inds, ...])
+        print("GT: ", target_labels['gt_cors'][reg_inds, ...])
+        print("LOC: ", pred_bboxes['loc'].corners[reg_inds, ...])
+        print("DIM: ", pred_bboxes['dim'].corners[reg_inds, ...])
 
-        loss_bbox_oris = self.loss_bbox(
-            pred_bboxes['ori'].corners[reg_inds, ...],
-            target_labels['gt_cors'][reg_inds, ...])
+        print("Orientation")
+        print("GT: ", pred_bboxes['ori_x'].corners[reg_inds, ...])
+        print("Ori_x_pred: ", target_labels['gt_cors_x'].corners[reg_inds, ...])
+
+        loss_bbox_oris_x = self.loss_bbox(
+            pred_bboxes['ori_x'].corners[reg_inds, ...],
+            target_labels['gt_cors_x'].corners[reg_inds, ...])
+        # commented for testing a single rotation
+        # loss_bbox_oris_y = self.loss_bbox(
+        #     pred_bboxes['ori_y'].corners[reg_inds, ...],
+        #     target_labels['gt_cors'][reg_inds, ...])
+
+        # loss_bbox_oris_z = self.loss_bbox(
+        #     pred_bboxes['ori_z'].corners[reg_inds, ...],
+        #     target_labels['gt_cors'][reg_inds, ...])
 
         loss_bbox_dims = self.loss_bbox(
             pred_bboxes['dim'].corners[reg_inds, ...],
@@ -526,13 +567,13 @@ class SMOKEMono3DHeadObjectron(AnchorFreeMono3DHead):
         loss_bbox_locs = self.loss_bbox(
             pred_bboxes['loc'].corners[reg_inds, ...],
             target_labels['gt_cors'][reg_inds, ...])
-
-        loss_bbox = loss_bbox_dims + loss_bbox_locs + loss_bbox_oris
-
-        print(loss_bbox_dims)
+        
+        print(loss_bbox_oris_x)
         print(loss_bbox_locs)
-        print(loss_bbox_oris)
+        print(loss_bbox_dims)
 
-        loss_dict = dict(loss_cls=loss_cls, loss_bbox=loss_bbox, loss_bbox_dims=loss_bbox_dims, loss_bbox_locs=loss_bbox_locs, loss_bbox_oris=loss_bbox_oris)
+        loss_bbox = loss_bbox_dims + loss_bbox_locs + loss_bbox_oris_x * 10 #+ loss_bbox_oris_y + loss_bbox_oris_z
+
+        loss_dict = dict(loss_cls=loss_cls, loss_bbox=loss_bbox)
 
         return loss_dict

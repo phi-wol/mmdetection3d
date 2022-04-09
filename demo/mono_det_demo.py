@@ -1,5 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from argparse import ArgumentParser
+import mmcv
+from os import path as osp
 
 from mmdet3d.apis import (inference_mono_3d_detector, init_model,
                           show_result_meshlab)
@@ -40,6 +42,22 @@ def main():
         show=args.show,
         snapshot=args.snapshot,
         task='mono-det')
+    
+    # print numerical output values
+    print(result)
+    # torch tensors not serial -> pkl format
+
+    file_name = osp.split(args.image)[-1].split('.')[0]
+    result_path = osp.join(args.out_dir, file_name)
+
+    mmcv.dump(result, result_path + '/' + file_name + "result.pkl")
+    # make json serializable
+    save_dict = {
+        'boxes_3d': result[0]["boxes_3d"].tensor.tolist(),
+        'scores_3d': result[0]["scores_3d"].tolist(),
+        'labels_3d':  result[0]["labels_3d"].tolist()
+        }
+    mmcv.dump(save_dict, result_path + '/' + file_name + "result.json")
 
 
 if __name__ == '__main__':

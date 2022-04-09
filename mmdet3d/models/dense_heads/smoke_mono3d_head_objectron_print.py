@@ -14,7 +14,7 @@ from .anchor_free_mono3d_head import AnchorFreeMono3DHead
 
 
 @HEADS.register_module()
-class SMOKEMono3DHeadObjectron(AnchorFreeMono3DHead):
+class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
     r"""Anchor-free head used in `SMOKE <https://arxiv.org/abs/2002.10111>`_
 
     .. code-block:: none
@@ -59,6 +59,8 @@ class SMOKEMono3DHeadObjectron(AnchorFreeMono3DHead):
                  loss_attr=None,
                  norm_cfg=dict(type='GN', num_groups=32, requires_grad=True),
                  init_cfg=None,
+                 print_loss = False,
+                 print_corners = False,
                  **kwargs):
         super().__init__(
             num_classes,
@@ -73,6 +75,8 @@ class SMOKEMono3DHeadObjectron(AnchorFreeMono3DHead):
         self.dim_channel = dim_channel
         self.ori_channel = ori_channel
         self.bbox_coder = build_bbox_coder(bbox_coder)
+        self.print_loss = print_loss
+        self.print_corners = print_corners
 
     def forward(self, feats):
         """Forward features from the upstream network.
@@ -510,10 +514,13 @@ class SMOKEMono3DHeadObjectron(AnchorFreeMono3DHead):
             center2d_heatmap, center2d_heatmap_target, avg_factor=avg_factor)
 
         reg_inds = target_labels['reg_indices']
-        # print(target_labels['gt_cors'][reg_inds, ...])
-        # print(pred_bboxes['ori'].corners[reg_inds, ...])
-        # print(pred_bboxes['dim'].corners[reg_inds, ...])
-        # print(pred_bboxes['loc'].corners[reg_inds, ...])
+
+        # debug
+        if self.print_corners:
+            print(target_labels['gt_cors'][reg_inds, ...])
+            print(pred_bboxes['ori'].corners[reg_inds, ...])
+            print(pred_bboxes['dim'].corners[reg_inds, ...])
+            print(pred_bboxes['loc'].corners[reg_inds, ...])
 
         loss_bbox_oris = self.loss_bbox(
             pred_bboxes['ori'].corners[reg_inds, ...],
@@ -529,9 +536,11 @@ class SMOKEMono3DHeadObjectron(AnchorFreeMono3DHead):
 
         loss_bbox = loss_bbox_dims + loss_bbox_locs + loss_bbox_oris
 
-        print(loss_bbox_dims)
-        print(loss_bbox_locs)
-        print(loss_bbox_oris)
+        if self.print_loss:
+            print("---")
+            print("Dim: ", loss_bbox_dims)
+            print("Loc: ", loss_bbox_locs)
+            print("Rot: ", loss_bbox_oris)
 
         loss_dict = dict(loss_cls=loss_cls, loss_bbox=loss_bbox, loss_bbox_dims=loss_bbox_dims, loss_bbox_locs=loss_bbox_locs, loss_bbox_oris=loss_bbox_oris)
 

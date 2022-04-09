@@ -186,9 +186,9 @@ class SMOKECoderObjectron(BaseBBoxCoder):
         # locations = locations.view(-1, 3)
         #rays = torch.atan(locations[:, 0] / (locations[:, 2] + 1e-7))
         # directly regress coordinates, no local transformation
-        roll = torch.atan(ori_vector[:, 0] / (ori_vector[:, 1] + 1e-7))
-        yaw = torch.atan(ori_vector[:, 2] / (ori_vector[:, 3] + 1e-7))
-        pitch = torch.atan(ori_vector[:, 4] / (ori_vector[:, 5] + 1e-7))
+        roll = torch.atan(ori_vector[:, 0] / (ori_vector[:, 1] + 1e-7)) * 2
+        yaw = torch.atan(ori_vector[:, 2] / (ori_vector[:, 3] + 1e-7)) * 2
+        pitch = torch.atan(ori_vector[:, 4] / (ori_vector[:, 5] + 1e-7)) * 2
 
         # get cosine value positive and negative index. 
         # roll_cos_pos_inds = (ori_vector[:, 1] >= 0).nonzero(as_tuple=False)
