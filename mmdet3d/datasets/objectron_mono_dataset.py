@@ -53,8 +53,8 @@ class ObjectronMonoDataset(CocoDataset):
             Defaults to False.
         version (str, optional): Dataset version. Defaults to 'v1.0-trainval'.
     """
-    CLASSES = ['bike', 'book', 'bottle', 'cereal_box', 'camera', 'chair', 'cup', 'laptop', 'shoe']
-
+    # CLASSES = ['bike', 'book', 'bottle', 'cereal_box', 'camera', 'chair', 'cup', 'laptop', 'shoe']
+    CLASSES = ['book', 'chair']
     # DefaultAttribute = {
     #     'car': 'vehicle.parked',
     #     'pedestrian': 'pedestrian.moving',
@@ -107,6 +107,9 @@ class ObjectronMonoDataset(CocoDataset):
                 use_map=False,
                 use_external=False)
         #self.objectron_evaluator = Evaluator()
+
+        self.name2label = {cat: i for i, cat in enumerate(self.CLASSES)}
+        print(self.name2label)
 
     def pre_pipeline(self, results):
         """Initialization before data preparation.
@@ -166,14 +169,15 @@ class ObjectronMonoDataset(CocoDataset):
                 continue
             if ann['area'] <= 0 or w < 1 or h < 1:
                 continue
-            if ann['category_id'] not in self.cat_ids:
+            if ann['category_name'] not in self.CLASSES:
                 continue
             bbox = [x1, y1, x1 + w, y1 + h]
             if ann.get('iscrowd', False):
                 gt_bboxes_ignore.append(bbox)
             else:
                 gt_bboxes.append(bbox)
-                gt_labels.append(self.cat2label[ann['category_id']])
+                # gt_labels.append(self.cat2label[ann['category_id']])
+                gt_labels.append(self.name2label[ann['category_name']])
                 gt_masks_ann.append(ann.get('segmentation', None))
                 # 3D annotations in camera coordinates
                 bbox_cam3d = np.array(ann['bbox_cam3d']).reshape(-1, )
