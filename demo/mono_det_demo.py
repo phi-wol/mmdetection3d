@@ -2,7 +2,7 @@
 from argparse import ArgumentParser
 import mmcv
 from os import path as osp
-
+import time 
 from mmdet3d.apis import (inference_mono_3d_detector, init_model,
                           show_result_meshlab)
 
@@ -32,7 +32,12 @@ def main():
     # build the model from a config file and a checkpoint file
     model = init_model(args.config, args.checkpoint, device=args.device)
     # test a single image
+    start = time.time()
+    print("start", time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.gmtime()), start)
     result, data = inference_mono_3d_detector(model, args.image, args.ann)
+    stop = time.time() 
+    print("stop", time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.gmtime()), stop)
+    print("duration", stop-start)
     # show the results
     show_result_meshlab(
         data,

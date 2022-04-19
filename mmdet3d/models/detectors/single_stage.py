@@ -2,6 +2,7 @@
 from mmdet.models import DETECTORS, build_backbone, build_head, build_neck
 from .base import Base3DDetector
 
+from detectionutils.benchmarking import Benchmark
 
 @DETECTORS.register_module()
 class SingleStage3DDetector(Base3DDetector):
@@ -52,15 +53,20 @@ class SingleStage3DDetector(Base3DDetector):
             outs = self.bbox_head(x)
         return outs
 
+
     def extract_feat(self, points, img_metas=None):
         """Directly extract features from the backbone+neck.
 
         Args:
             points (torch.Tensor): Input points.
         """
-        x = self.backbone(points)
-        if self.with_neck:
-            x = self.neck(x)
+        print("extract_feat")
+        with Benchmark("extract_feat.backbone"):
+            x = self.backbone(points)
+        
+        with Benchmark("extract_feat.neck"):
+            if self.with_neck:
+                x = self.neck(x)
         return x
 
     def extract_feats(self, points, img_metas):

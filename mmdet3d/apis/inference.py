@@ -2,6 +2,7 @@
 import re
 from copy import deepcopy
 from os import path as osp
+import time
 
 import mmcv
 import numpy as np
@@ -240,6 +241,69 @@ def inference_mono_3d_detector(model, image, ann_file):
     box_type_3d, box_mode_3d = get_box_type(cfg.data.test.box_type_3d)
     # get data info containing calib
     data_infos = mmcv.load(ann_file)
+    print(time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.gmtime()), "ann_loaded")
+    # find the info corresponding to this image
+    for x in data_infos['images']:
+        if osp.basename(x['file_name']) != osp.basename(image):
+            continue
+        img_info = x
+        break
+    print(time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.gmtime()), "data found")
+    data = dict(
+        img_prefix=osp.dirname(image),
+        img_info=dict(filename=osp.basename(image)),
+        box_type_3d=box_type_3d,
+        box_mode_3d=box_mode_3d,
+        img_fields=[],
+        bbox3d_fields=[],
+        pts_mask_fields=[],
+        pts_seg_fields=[],
+        bbox_fields=[],
+        mask_fields=[],
+        seg_fields=[])
+
+    # camera points to image conversion
+    if box_mode_3d == Box3DMode.CAM:
+        data['img_info'].update(dict(cam_intrinsic=img_info['cam_intrinsic']))
+
+    data = test_pipeline(data)
+
+    data = collate([data], samples_per_gpu=1)
+    if next(model.parameters()).is_cuda:
+        # scatter to specified GPU
+        data = scatter(data, [device.index])[0]
+    else:
+        # this is a workaround to avoid the bug of MMDataParallel
+        data['img_metas'] = data['img_metas'][0].data
+        data['img'] = data['img'][0].data
+
+    # forward the model
+    with torch.no_grad():
+        print(time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.gmtime()), "nograd")
+        start = time.time()
+        result = model(return_loss=False, rescale=True, **data)
+        print(time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.gmtime()), "result retrieved, duration: ", time.time() - start)
+    return result, data
+
+def inference_mono_3d_detector_custom(model, image, ann_file):
+    """Inference image with the monocular 3D detector.
+
+    Args:
+        model (nn.Module): The loaded detector.
+        image (str): Image files.
+        ann_file (str): Annotation files.
+
+    Returns:
+        tuple: Predicted results and data from pipeline.
+    """
+    cfg = model.cfg
+    device = next(model.parameters()).device  # model device
+    # build the data pipeline
+    test_pipeline = deepcopy(cfg.data.test.pipeline) # TODO: change pipeline for custom image size
+    test_pipeline = Compose(test_pipeline) # TODO: check Compose 
+    box_type_3d, box_mode_3d = get_box_type(cfg.data.test.box_type_3d) #TODO: understand box types
+    # get data info containing calib
+    data_infos = mmcv.load(ann_file)
     # find the info corresponding to this image
     for x in data_infos['images']:
         if osp.basename(x['file_name']) != osp.basename(image):
@@ -249,7 +313,7 @@ def inference_mono_3d_detector(model, image, ann_file):
     data = dict(
         img_prefix=osp.dirname(image),
         img_info=dict(filename=osp.basename(image)),
-        box_type_3d=box_type_3d,
+        box_type_3d=box_type_3d, 
         box_mode_3d=box_mode_3d,
         img_fields=[],
         bbox3d_fields=[],
@@ -457,7 +521,7 @@ def show_proj_det_result_meshlab(data,
                 'camera intrinsic matrix is not provided')
 
         show_bboxes = CameraInstance3DBoxes(
-            pred_bboxes, box_dim=pred_bboxes.shape[-1], origin=(0.5, 1.0, 0.5))
+            pred_bboxes, box_dim=pred_bboxes.shape[-1], origin=(0.5, 0.5, 0.5)) # new convention, setting origin to real center
 
         show_multi_modality_result(
             img,
