@@ -12,3 +12,9 @@ test-demo:
 
 benchmark:
 	python tools/analysis_tools/benchmark.py ./input/smoke_dla34_pytorch_dlaneck_gn-all_8x4_6x_objectron-mono3d_pwo_objectron_generalize_full_ds_multi.py ./output/generalize_chair_2022_04_01_multi_full/epoch_9.pth
+
+print_feat:
+	python -u demo/mono_det_demo.py /mmdetection3d/objectron_processed_chair_all/images/chair_batch-36_17_50.jpg  /mmdetection3d/objectron_processed_chair_all/annotations/objectron_train.json  ./input/smoke_dla34_pytorch_dlaneck_gn-all_8x4_6x_objectron-mono3d_pwo_objectron_generalize_full_ds_multi_print.py ./output/generalize_chair_2022_04_01_multi_full/epoch_9.pth --out-dir /mmdetection3d/output/print_feat_2022_04_20
+
+overfit:
+	python tools/train.py ./input/smoke_dla34_pytorch_dlaneck_gn-all_8x4_6x_objectron-mono3d_pwo_objectron_generalize_subset_single_overfit_lr.py --work-dir output/overfit_single_class_2022_04_20
