@@ -78,7 +78,7 @@ def plot_rect3d_on_img(img,
     """
     line_indices = ((0, 1), (0, 3), (0, 4), (1, 2), (1, 5), (3, 2), (3, 7),
                     (4, 5), (4, 7), (2, 6), (5, 6), (6, 7))
-    top_indices = ((0,5), (1, 4))
+    top_indices = ((0,5), (1, 4), (0, 7), (3, 4))
 
     for i in range(num_rects):
         corners = rect_corners[i].astype(int)

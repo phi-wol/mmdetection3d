@@ -54,7 +54,7 @@ class ObjectronMonoDataset(CocoDataset):
         version (str, optional): Dataset version. Defaults to 'v1.0-trainval'.
     """
     # CLASSES = ['bike', 'book', 'bottle', 'cereal_box', 'camera', 'chair', 'cup', 'laptop', 'shoe']
-    CLASSES = ['book', 'chair']
+    CLASSES = ['chair', 'book']
     # DefaultAttribute = {
     #     'car': 'vehicle.parked',
     #     'pedestrian': 'pedestrian.moving',
