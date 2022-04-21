@@ -17,9 +17,19 @@ from mmdet.models.utils.gaussian_target import (get_local_maximum,
                                                 get_topk_from_heatmap,
                                                 transpose_and_gather_feat)
 from .anchor_free_mono3d_head import AnchorFreeMono3DHead
+import matplotlib.pyplot as plt
 
 
-DEBUG_FOLDER = Path("/mmdetection3d/output/print_feat_2022_04_12")
+DEBUG_FOLDER = Path("/mmdetection3d/output/print_feat_2022_04_19_v3")
+
+def plot_matrix(matrix, title, path):
+    fig, ax = plt.subplots(nrows=1, ncols=1)
+    ax.imshow(np.array(matrix.detach().cpu()))
+    ax.set_title(title)
+    path.parent.mkdir(exist_ok=True, parents=True)
+    plt.savefig(path)
+    plt.savefig(str(path) + ".png")
+    plt.close()
 
 @HEADS.register_module()
 class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
@@ -70,6 +80,7 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
                  print_loss = False,
                  print_corners = False,
                  print_feat = False,
+                 plot_feat_map = False,
                  **kwargs):
         super().__init__(
             num_classes,
@@ -87,6 +98,7 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
         self.print_loss = print_loss
         self.print_corners = print_corners
         self.print_feat = print_feat
+        self.plot_feat_map = plot_feat_map
 
     def forward(self, feats):
         """Forward features from the upstream network.
@@ -140,17 +152,14 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
         # normalize pitch
         bbox_pred[:, self.ori_channel[4:6], ...] = F.normalize(vector_pitch)
 
+        if self.plot_feat_map:
+            for i, heatmap in enumerate(x[0]):
+                plot_matrix(heatmap, f"Layer: {i}", DEBUG_FOLDER/ Path(f"featmap_{i}.pdf"))
+
         if self.print_feat:
             print("Feature Map: ", x)
             print("Feature Map: hape ", x.shape)
-            print("Feature Map span: ", x.min(), x.max())
-
-            for i, heatmap in enumerate(x[0]):
-                img = Image.fromarray(np.array(np.abs(heatmap.cpu()) * 255, dtype=int).transpose(), "L")
-                heatmap_folder = DEBUG_FOLDER / Path("heatmap")
-                heatmap_folder.mkdir(exist_ok=True, parents=True)
-                img.save(heatmap_folder / Path(f"heatmap_{i}.png"))
-                
+            print("Feature Map span: ", x.min(), x.max())               
 
             print('features after classification and regression conv layers')
             print("reg_feat: ", reg_feat)
@@ -170,11 +179,14 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
             print('shape (B, num_classes, H, W)')
             print("cls_score: ", cls_score)
             print("cls_score size: ", cls_score.shape)
+            
+            print("self.num_classes: ",  self.num_classes)
 
         print("FORWARD_SINGLE DONE in HEAD", time.time())
         return cls_score, bbox_pred
 
     def get_bboxes(self, cls_scores, bbox_preds, img_metas, rescale=None):
+        # for inference
         """Generate bboxes from bbox head predictions.
 
         Args:
@@ -194,6 +206,7 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
             cls_scores[0].new_tensor(img_meta['cam2img'])
             for img_meta in img_metas
         ])
+        #print("IMg_metas: ", img_metas)
         trans_mats = torch.stack([
             cls_scores[0].new_tensor(img_meta['trans_mat'])
             for img_meta in img_metas
@@ -269,6 +282,9 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
         img_h, img_w = img_metas[0]['pad_shape'][:2]
         bs, _, feat_h, feat_w = cls_score.shape
 
+        if self.plot_feat_map:
+            plot_matrix(cls_score.squeeze(), f"", DEBUG_FOLDER/ Path(f"heatmap_before_max.pdf"))   
+
         center_heatmap_pred = get_local_maximum(cls_score, kernel=kernel)
 
 
@@ -293,10 +309,14 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
         batch_bboxes = torch.cat((locations, dimensions, orientations), dim=1)
         batch_bboxes = batch_bboxes.view(bs, -1, self.bbox_code_size)
 
+        if self.plot_feat_map:
+            plot_matrix(center_heatmap_pred.squeeze(), f"", DEBUG_FOLDER/ Path(f"heatmap_after_max.pdf")) 
+
         if self.print_feat:
             print('decode_heatmap(self, cls_score, reg_pred, img_metas, cam2imgs, trans_mats, topk=100, kernel=3):')
             print('center_heatmap_pred shape: ', center_heatmap_pred.shape)
-            print('center_heatmap_pred: ', center_heatmap_pred)
+            print('center_heatmap_pred: ', center_heatmap_pred) 
+
             print('regression shape', regression.shape)
             print('self.bbox_coder.decode()')
             print("locations, dimensions, orientations")
@@ -337,6 +357,12 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
         """
         print("get_predictions in HEAD", time.time())
 
+        print(labels3d)
+        print(indices)
+        print(centers2d)
+        print(gt_locations)
+        print(pred_reg.shape)
+
         batch, channel = pred_reg.shape[0], pred_reg.shape[1]
         w = pred_reg.shape[3]
         cam2imgs = torch.stack([
@@ -350,6 +376,8 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
         centers2d_inds = centers2d[:, 1] * w + centers2d[:, 0]
         centers2d_inds = centers2d_inds.view(batch, -1)
         pred_regression = transpose_and_gather_feat(pred_reg, centers2d_inds)
+        print("channel: ", channel)
+
         pred_regression_pois = pred_regression.view(-1, channel)
         locations, dimensions, orientations = self.bbox_coder.decode(
             pred_regression_pois, centers2d, labels3d, cam2imgs, trans_mats,
@@ -432,6 +460,8 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
 
         width_ratio = float(feat_w / img_w)  # 1/4
         height_ratio = float(feat_h / img_h)  # 1/4
+        print(width_ratio)
+        print(height_ratio)
 
         assert width_ratio == height_ratio
 
@@ -439,7 +469,7 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
             [bs, self.num_classes, feat_h, feat_w])
 
         gt_centers2d = centers2d.copy()
-
+        print("center_heatmap_target: ", center_heatmap_target.shape)
         for batch_id in range(bs):
             gt_bbox = gt_bboxes[batch_id]
             gt_label = gt_labels[batch_id]
@@ -454,9 +484,18 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
                                          min_overlap=0.7)
                 radius = max(0, int(radius))
                 ind = gt_label[j]
+
                 gen_gaussian_target(center_heatmap_target[batch_id, ind],
                                     [center_x_int, center_y_int], radius)
 
+            if self.print_feat:  
+                for i in range(center_heatmap_target.shape[1]):           
+                    plot_matrix(
+                        center_heatmap_target[batch_id, i], 
+                        f"Class: {i}", 
+                        DEBUG_FOLDER/ Path(f"gt_heatmap_gaussian_post_{i}.pdf"))
+                                    
+                ## 
         avg_factor = max(1, center_heatmap_target.eq(1).sum())
         num_ctrs = [center2d.shape[0] for center2d in centers2d]
         max_objs = max(num_ctrs)

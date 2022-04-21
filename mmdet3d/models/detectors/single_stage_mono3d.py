@@ -66,8 +66,6 @@ class SingleStageMono3DDetector(SingleStageDetector):
         Returns:
             dict[str, Tensor]: A dictionary of loss components.
         """
-        print("Image: ", img)
-        print("Image Size: ", img.shape)
         x = self.extract_feat(img)
         losses = self.bbox_head.forward_train(x, img_metas, gt_bboxes,
                                               gt_labels, gt_bboxes_3d,
