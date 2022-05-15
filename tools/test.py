@@ -2,6 +2,7 @@
 import argparse
 import os
 import warnings
+import numpy as np
 
 import mmcv
 import torch
@@ -165,6 +166,31 @@ def main():
 
     # build the dataloader
     dataset = build_dataset(cfg.data.test)
+    # print(dataset)
+    print(dataset.datasets)
+    # print(len(dataset.datasets[0]))
+    # print(len(dataset))
+
+    instance_count = np.zeros(len(dataset.datasets[0].CLASSES) + 1).astype(int)
+    for idx in range(len(dataset.datasets[0])):  
+        if len(dataset.datasets[0].get_ann_info(idx)['bboxes']) == 0:
+            continue
+        label = dataset.datasets[0].get_ann_info(idx)['labels']
+        unique, counts = np.unique(label, return_counts=True)
+        if len(unique) > 0:
+            # add the occurrence number to each class
+            instance_count[unique] += counts
+        else:
+            # background is the last index
+            instance_count[-1] += 1
+            # print(idx)
+            # print(unique)
+            # print("Annotation Length: ", len(dataset.datasets[0].get_ann_info(idx)))
+            # print(dataset.datasets[0].get_ann_info(idx))
+
+
+    #subset = torch.utils.data.Subset(dataset, [92335, 92336, 92337, 92338, 92339, 92340, 92341, 92342, 92343, 92344])
+    #dataset = dataset.datasets[1]
     data_loader = build_dataloader(
         dataset,
         samples_per_gpu=samples_per_gpu,
