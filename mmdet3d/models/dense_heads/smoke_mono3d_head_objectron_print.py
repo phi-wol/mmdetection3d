@@ -81,6 +81,7 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
                  print_corners = False,
                  print_feat = False,
                  plot_feat_map = False,
+                 print_time = False,
                  **kwargs):
         super().__init__(
             num_classes,
@@ -99,6 +100,7 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
         self.print_corners = print_corners
         self.print_feat = print_feat
         self.plot_feat_map = plot_feat_map
+        self.print_time = print_time
 
     def forward(self, feats):
         """Forward features from the upstream network.
@@ -116,7 +118,8 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
                     level, each is a 4D-tensor, the channel number is
                     num_points * bbox_code_size.
         """
-        print("FORWARD in HEAD", time.time())
+        if self.print_time:
+            print("FORWARD in HEAD", time.time())
         return multi_apply(self.forward_single, feats)
 
     def forward_single(self, x):
@@ -128,7 +131,8 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
         Returns:
             tuple: Scores for each class, bbox of input feature maps.
         """
-        print("FORWARD_SINGLE in HEAD", time.time())
+        if self.print_time:
+            print("FORWARD_SINGLE in HEAD", time.time())
         cls_score, bbox_pred, dir_cls_pred, attr_pred, cls_feat, reg_feat = \
             super().forward_single(x)
 
@@ -182,7 +186,8 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
             
             print("self.num_classes: ",  self.num_classes)
 
-        print("FORWARD_SINGLE DONE in HEAD", time.time())
+        if self.print_time:
+            print("FORWARD_SINGLE DONE in HEAD", time.time())
         return cls_score, bbox_pred
 
     def get_bboxes(self, cls_scores, bbox_preds, img_metas, rescale=None):
@@ -200,7 +205,8 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
             list[tuple[:obj:`CameraInstance3DBoxes`, Tensor, Tensor, None]]:
                 Each item in result_list is 4-tuple.
         """
-        print("get_bboxes START in HEAD", time.time())
+        if self.print_time:
+            print("get_bboxes START in HEAD", time.time())
         assert len(cls_scores) == len(bbox_preds) == 1
         cam2imgs = torch.stack([
             cls_scores[0].new_tensor(img_meta['cam2img'])
@@ -240,7 +246,8 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
         if self.print_feat:
             print('get_bboxes(self, cls_scores, bbox_preds, img_metas, rescale=None)')
 
-        print("get_bboxes DONE in HEAD", time.time())
+        if self.print_time:
+            print("get_bboxes DONE in HEAD", time.time())
         return result_list
 
     def decode_heatmap(self,
@@ -355,13 +362,14 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
             - bbox3d_locs (:obj:`CameraInstance3DBoxes`):
                 bbox calculated using pred locations.
         """
-        print("get_predictions in HEAD", time.time())
+        if self.print_time:
+            print("get_predictions in HEAD", time.time())
 
-        print(labels3d)
-        print(indices)
-        print(centers2d)
-        print(gt_locations)
-        print(pred_reg.shape)
+        # print(labels3d)
+        # print(indices)
+        # print(centers2d)
+        # print(gt_locations)
+        # print(pred_reg.shape)
 
         batch, channel = pred_reg.shape[0], pred_reg.shape[1]
         w = pred_reg.shape[3]
@@ -376,7 +384,7 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
         centers2d_inds = centers2d[:, 1] * w + centers2d[:, 0]
         centers2d_inds = centers2d_inds.view(batch, -1)
         pred_regression = transpose_and_gather_feat(pred_reg, centers2d_inds)
-        print("channel: ", channel)
+        #print("channel: ", channel)
 
         pred_regression_pois = pred_regression.view(-1, channel)
         locations, dimensions, orientations = self.bbox_coder.decode(
@@ -402,7 +410,8 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
                                              gt_orientations, img_metas)
 
         pred_bboxes = dict(ori=bbox3d_yaws, dim=bbox3d_dims, loc=bbox3d_locs)
-        print("get_predictions DONE in HEAD", time.time())
+        if self.print_time:
+            print("get_predictions DONE in HEAD", time.time())
         return pred_bboxes
 
     def get_targets(self, gt_bboxes, gt_labels, gt_bboxes_3d, gt_labels_3d,
@@ -447,8 +456,8 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
               - gt_cors (Tensor): Coords of the corners of each 3D box.
                     shape (N, 8, 3)
         """
-
-        print("get_targets START in HEAD", time.time())
+        if self.print_time:
+            print("get_targets START in HEAD", time.time())
         reg_mask = torch.stack([
             gt_bboxes[0].new_tensor(
                 not img_meta['affine_aug'], dtype=torch.bool)
@@ -460,8 +469,6 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
 
         width_ratio = float(feat_w / img_w)  # 1/4
         height_ratio = float(feat_h / img_h)  # 1/4
-        print(width_ratio)
-        print(height_ratio)
 
         assert width_ratio == height_ratio
 
@@ -469,7 +476,8 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
             [bs, self.num_classes, feat_h, feat_w])
 
         gt_centers2d = centers2d.copy()
-        print("center_heatmap_target: ", center_heatmap_target.shape)
+        if self.print_feat:
+            print("center_heatmap_target: ", center_heatmap_target.shape)
         for batch_id in range(bs):
             gt_bbox = gt_bboxes[batch_id]
             gt_label = gt_labels[batch_id]
@@ -551,7 +559,8 @@ class SMOKEMono3DHeadObjectronPrint(AnchorFreeMono3DHead):
             gt_yaws=gt_orientations,
             gt_cors=gt_corners)
 
-        print("get_targets DONE in HEAD", time.time())
+        if self.print_time:
+            print("get_targets DONE in HEAD", time.time())
         return center_heatmap_target, avg_factor, target_labels
 
     def loss(self,
