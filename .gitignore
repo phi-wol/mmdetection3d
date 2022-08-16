@@ -155,6 +155,8 @@ tmp
 *.mov
 *.mp4
 
-*/share/
+*share/
+
+viz/
 
 *.pickle
