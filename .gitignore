@@ -133,3 +133,28 @@ data/sunrgbd/OFFICIAL_SUNRGBD/
 
 # Waymo evaluation
 mmdet3d/core/evaluation/waymo_utils/compute_detection_metrics_main
+
+# input & output data
+input/
+output/
+objectron_processed_book_all
+objectron_processed_chair_all
+objectron_processed_bike_all
+objectron_processed_chair_all_filtered
+
+# macOs
+.DS_Store
+
+# deployment tests
+mmdeploy/
+onnxruntime-linux-x64-1.8.1/
+
+artifacts/detectron2
+tmp
+
+*.mov
+*.mp4
+
+*/share/
+
+*.pickle
