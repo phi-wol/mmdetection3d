@@ -1,37 +1,41 @@
 _base_ = [
-    './kitti-mono3d_objectron.py', '../_base_/default_runtime.py' #'../configs/_base_/models/smoke.py' already copied below
+    './objectron-mono3d.py', '../configs/_base_/default_runtime.py' #'../configs/_base_/models/smoke.py' already copied below
 ]
 
-checkpoint_config = dict(interval=100)
+workflow = [('train', 1)]
+
+checkpoint_config = dict(interval=50)
 log_config = dict(
     interval=1,
     hooks=[
         dict(type='TextLoggerHook'),
         dict(type='TensorboardLoggerHook')
     ])
-
+    
 # testing new folders:
 data_root = "input/objectron_processed_chair"
-ann_file_test=data_root + '/annotations/objectron_test.json', # defines 'LoadImageFromFileMono3D' & 'LoadAnnotations3D'
+ann_file_test= data_root + '/annotations/objectron_test.json', # defines 'LoadImageFromFileMono3D' & 'LoadAnnotations3D'
 # info_file = data_root + 'infos.pkl'
+ann_file_train = data_root + '/annotations/objectron_train_single.json',
 
 # scale = (1920, 1440) # original resolution
-scale = (960, 720) # size_divisor = 2
+# size_divisor = 2 (960, 720)
+scale = (960, 720) # 4 (480, 360) 
 
 # optimizer
 optimizer = dict(type='Adam', lr=2.5e-4)
 optimizer_config = dict(grad_clip=None)
-lr_config = dict(policy='step', warmup=None, step=[50, 50, 50])
+lr_config = dict(policy='step', warmup=None, step=[50]) # 50, 100, 150
 
 # runtime settings
-runner = dict(type='EpochBasedRunner', max_epochs=1000)
+runner = dict(type='EpochBasedRunner', max_epochs=500)
 
 find_unused_parameters = True
 class_names = ["chair"] # TODO: single class?
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True) #TODO: Change on images from different distribution?
 
-dataset_type = 'KittiMonoDatasetObjectron' # TODO: new dataset? change loading and evaluation procedure
+dataset_type = 'ObjectronMonoDataset' # TODO: new dataset? change loading and evaluation procedure # 'KittiMonoDatasetObjectron'
 input_modality = dict(use_lidar=False, use_camera=True)
 
 train_pipeline = [
@@ -44,8 +48,8 @@ train_pipeline = [
         with_bbox_3d=True,
         with_label_3d=True,
         with_bbox_depth=True),
-    dict(type='RandomFlip3D', flip_ratio_bev_horizontal=0.5),
-    dict(type='RandomShiftScale', shift_scale=(0.2, 0.4), aug_prob=0.3),
+    #dict(type='RandomFlip3D', flip_ratio_bev_horizontal=0.5),
+    #dict(type='RandomShiftScale', shift_scale=(0.2, 0.4), aug_prob=0.3),
     dict(type='AffineResize', img_scale=scale, down_ratio=4),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='Pad', size_divisor=32),
@@ -64,7 +68,7 @@ test_pipeline = [
         img_scale=scale,
         flip=False,
         transforms=[
-            dict(type='AffineResize', img_scale=scale, down_ratio=4), # TODO: just leave out, when providing perfectly sized images?
+            dict(type='AffineResize', img_scale=scale, down_ratio=4),
             dict(type='Normalize', **img_norm_cfg),
             dict(type='Pad', size_divisor=32),
             dict(
@@ -75,15 +79,20 @@ test_pipeline = [
         ])
 ]
 data = dict(
-    samples_per_gpu=2,
-    workers_per_gpu=2,
-    train=dict(pipeline=train_pipeline),
-    val=dict(pipeline=test_pipeline),
+    samples_per_gpu=1,
+    workers_per_gpu=1,
+    train=dict(
+        data_root= data_root,
+        ann_file= data_root + '/annotations/objectron_train_single.json', # '/annotations/objectron_train_single.json' '/annotations/objectron_train.json'
+        #info_file= data_root + '/annotations/objectron_train.json',
+        pipeline=train_pipeline),
+    val=dict(
+        pipeline=test_pipeline,
+        ann_file = data_root + '/annotations/objectron_train_single.json'),
     test=dict(
         type=dataset_type,
         data_root=data_root,
-        ann_file=ann_file_test,
-        # info_file=info_file,
+        ann_file= data_root + '/annotations/objectron_train_single.json',# ann_file_test,
         img_prefix=data_root,
         classes=class_names,
         pipeline=test_pipeline, # TODO: Change?
@@ -109,7 +118,7 @@ model = dict(
         end_level=5,
         norm_cfg=dict(type='GN', num_groups=32)),
     bbox_head=dict(
-        type='SMOKEMono3DHeadObjectron', #TODO: new head
+        type='SMOKEMono3DHeadObjectron', #TODO: new head  SMOKEMono3DHeadObjectronEuler
         num_classes=1, # TODO: focus on single class overfit
         in_channels=64,
         dim_channel=[3, 4, 5],
@@ -130,12 +139,12 @@ model = dict(
         dir_branch=(),
         attr_branch=(),
         bbox_coder=dict(
-            type='SMOKECoderObjectron', #TODO: new box coder
-            base_depth=(28.01, 16.32), #Hyperparameter
-            base_dims=((0.50999998, 0.8281818,  0.51636363),), # for now only dummy chair dims
+            type='SMOKECoderObjectronAlpha', #TODO: new box coder
+            base_depth=(10, 5), #Hyperparameter (28.01, 16.32)
+            base_dims=  ((0.5740664085137888, 0.8434027515832329, 0.6051523831888338),), # ((2.0, 2.0, 2.0),), # ((0.50999998, 0.8281818,  0.51636363),), # for now only dummy chair dims
             code_size=9),
         loss_cls=dict(type='GaussianFocalLoss', loss_weight=1.0),
-        loss_bbox=dict(type='L1Loss', reduction='sum', loss_weight=1 / 300),
+        loss_bbox=dict(type='L1Loss', reduction='sum', loss_weight=1.0 /300 ), #/ 300),
         loss_dir=dict(
             type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0),
         loss_attr=None,
