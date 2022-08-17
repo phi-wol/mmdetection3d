@@ -119,6 +119,57 @@ class Detection():
     def __str__(self):
         return json.dumps(self.to_dict())
 
+class Detection9D():
+    def __init__(self, x, y, z, l, w, h, alpha, beta, gamma, score, class_name, instance_id) -> None:
+        self.x = x
+        self.y = y
+        self.z = z
+        self.l = l
+        self.w = w
+        self.h = h
+        self.alpha = alpha
+        self.beta = beta
+        self.gamma = gamma
+        self.score = score 
+        self.class_name = class_name
+        self.instance_id = instance_id
+
+    def get_center(self):
+        return [self.x, self.y, self.z]
+
+    def get_size(self):
+        return [self.l, self.w, self.h]
+
+    def get_rotation_euler(self):
+        return [self.alpha, self.beta, self.gamma]
+    
+    def get_rotation_matrix(self):
+        return R.from_euler("xyz", np.array([self.alpha, self.beta, self.gamma])).as_matrix()
+    
+    def get_tensor(self):
+        return [self.x, self.y, self.z, self.l, self.w, self.h, self.alpha, self.beta, self.gamma]
+
+    def to_dict(self) -> dict:
+        return {
+            "x": self.x,
+            "y": self.y,
+            "z": self.z,
+            "l": self.l,
+            "w": self.w,
+            "h": self.h,
+            "alpha": self.alpha,
+            "beta": self.beta,
+            "gamma": self.gamma,
+            "score": self.score, 
+            "class_name": self.class_name,
+            "instance_id": self.instance_id
+        }
+        
+    def __repr__(self) -> str:
+        return json.dumps(self.to_dict())
+
+    def __str__(self):
+        return json.dumps(self.to_dict())
 
 class Detector():
 
