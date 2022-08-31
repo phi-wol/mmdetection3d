@@ -54,7 +54,7 @@ class ObjectronMonoDataset(CocoDataset):
         version (str, optional): Dataset version. Defaults to 'v1.0-trainval'.
     """
     # CLASSES = ['bike', 'book', 'bottle', 'cereal_box', 'camera', 'chair', 'cup', 'laptop', 'shoe']
-    CLASSES = ['chair', 'book']
+    CLASSES = ['bike', 'chair', 'book']
     # DefaultAttribute = {
     #     'car': 'vehicle.parked',
     #     'pedestrian': 'pedestrian.moving',
@@ -459,7 +459,10 @@ class ObjectronMonoDataset(CocoDataset):
         for sample_id, det in enumerate(mmcv.track_iter_progress(results)):
             
             img_info = self.data_infos[sample_id]
+            #img_id = img_info['id']
             ann_info = self.get_ann_info(sample_id)
+            if len(ann_info['bboxes']) == 0:
+                continue
 
             #image_id = img_info['image_id']
 
@@ -960,3 +963,32 @@ def nusc_box_to_cam_box3d(boxes):
 #     ann_ids = self.coco.get_ann_ids(img_ids=[img_id])
 #     ann_info = self.coco.load_anns(ann_ids)
 #     return self._parse_ann_info(self.data_infos[idx], ann_info)
+
+
+# def getAnnIds(self, imgIds=[], catIds=[], areaRng=[], iscrowd=None):
+#         """
+#         Get ann ids that satisfy given filter conditions. default skips that filter
+#         :param imgIds  (int array)     : get anns for given imgs
+#                catIds  (int array)     : get anns for given cats
+#                areaRng (float array)   : get anns for given area range (e.g. [0 inf])
+#                iscrowd (boolean)       : get anns for given crowd label (False or True)
+#         :return: ids (int array)       : integer array of ann ids
+#         """
+#         imgIds = imgIds if _isArrayLike(imgIds) else [imgIds]
+#         catIds = catIds if _isArrayLike(catIds) else [catIds]
+
+#         if len(imgIds) == len(catIds) == len(areaRng) == 0:
+#             anns = self.dataset['annotations']
+#         else:
+#             if not len(imgIds) == 0:
+#                 lists = [self.imgToAnns[imgId] for imgId in imgIds if imgId in self.imgToAnns]
+#                 anns = list(itertools.chain.from_iterable(lists))
+#             else:
+#                 anns = self.dataset['annotations']
+#             anns = anns if len(catIds)  == 0 else [ann for ann in anns if ann['category_id'] in catIds]
+#             anns = anns if len(areaRng) == 0 else [ann for ann in anns if ann['area'] > areaRng[0] and ann['area'] < areaRng[1]]
+#         if not iscrowd == None:
+#             ids = [ann['id'] for ann in anns if ann['iscrowd'] == iscrowd]
+#         else:
+#             ids = [ann['id'] for ann in anns]
+#         return ids

@@ -62,7 +62,7 @@ def plot_rect3d_on_img(img,
                        num_rects,
                        rect_corners,
                        color=(61, 102, 255), # red; (0, 255, 0), # blue
-                       thickness=4,
+                       thickness=1, #thick4
                        color_2 = (50, 170, 255) # light blue
                        ):
     """Plot the boundary lines of 3D rectangular on 2D images.
@@ -178,7 +178,7 @@ def draw_camera_bbox3d_on_img(bboxes3d,
                               cam2img,
                               img_metas,
                               color=(61, 102, 255),
-                              thickness=4,
+                              thickness=1, #thick4
                               color_2 = (50, 170, 255)
                               ):
     """Project the 3D bbox on 2D plane and draw on input image.

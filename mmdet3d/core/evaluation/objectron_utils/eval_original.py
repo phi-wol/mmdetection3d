@@ -207,7 +207,7 @@ class Evaluator(object):
     num_instances = 0
     for gt_box in labels:
       instance, instance_3d = gt_box
-      print(instance)
+      # print(instance)
       visibility = self.check_object_visibility(instance)
       visibilities.append(visibility)
       if (visibility > self._vis_thresh and
@@ -250,7 +250,10 @@ class Evaluator(object):
         # However many models learn to predict depths and scale correctly.
         #scale = self.compute_scale(box_point_3d, plane)
         #box_point_3d = box_point_3d * scale
-        print("3D Keypoint Mismatch: ", box_point_3d - instances_3d[index])
+        # print('pixel_error: ', pixel_error)
+        # print("3D Keypoint Mismatch: ", box_point_3d - instances_3d[index])
+        # print('box_point_3d: ', box_point_3d)
+        # print('instances_3d[index]: ', instances_3d[index])
         azimuth_error, polar_error, iou, add, adds= self.evaluate_3d(box_point_3d, instances_3d[index])
       else:
         pixel_error = _MAX_PIXEL_ERROR
@@ -616,9 +619,17 @@ class Evaluator(object):
     prediction = Box.Box(box)
     annotation = Box.Box(instance)
     iou = IoU(prediction, annotation)
-    iou_result = iou.iou()
+
+    # not so elegant solution for the numeric edge case in this reported bug:
+    # scipy.spatial.qhull.QhullError: QH6214 qhull input error: not enough points(2) to construct initial simplex (need 4)
+    # https://centerline.readthedocs.io/en/latest/chapters/faq.html#id1
+    # Happens when the detected boxes converge to an overlap of exactly 0.0 +/- epsilon
+    try: 
+      iou_result = iou.iou()
+    except:
+      iou_result = 0.0
     self._iou_3d += iou_result
-    print('IOU sample: ', iou_result)
+    # ('IOU sample: ', iou_result)
     return iou_result
 
   def match_box(self, box, instances, visibilities):

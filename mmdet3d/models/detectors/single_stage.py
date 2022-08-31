@@ -60,13 +60,13 @@ class SingleStage3DDetector(Base3DDetector):
         Args:
             points (torch.Tensor): Input points.
         """
-        print("extract_feat")
-        with Benchmark("extract_feat.backbone"):
-            x = self.backbone(points)
+        #print("extract_feat")
+        #with Benchmark("extract_feat.backbone"):
+        x = self.backbone(points)
         
-        with Benchmark("extract_feat.neck"):
-            if self.with_neck:
-                x = self.neck(x)
+        #with Benchmark("extract_feat.neck"):
+        if self.with_neck:
+            x = self.neck(x)
         return x
 
     def extract_feats(self, points, img_metas):

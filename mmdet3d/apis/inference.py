@@ -221,6 +221,95 @@ def inference_multi_modality_detector(model, pcd, image, ann_file):
         result = model(return_loss=False, rescale=True, **data)
     return result, data
 
+def direct_inference_mono_3d_detector(model, image, intrinsics):
+    # directly pass an image as input, with corresponding cam_intrinsics
+    
+    """Inference image with the monocular 3D detector.
+
+    Args:
+        model (nn.Module): The loaded detector.
+        image (str): Image files.
+        ann_file (str): Annotation files.
+
+    Returns:
+        tuple: Predicted results and data from pipeline.
+    """
+    cfg = model.cfg
+    device = next(model.parameters()).device  # model device
+    # build the data pipeline
+
+    test_pipeline = deepcopy(cfg.test_pipeline) # deepcopy(cfg.data.test.pipeline)
+    test_pipeline = Compose(test_pipeline)
+    box_type_3d, box_mode_3d =  CameraInstance3DBoxes, Box3DMode.CAM
+
+    # construct img_info by hand?
+    print(np.array(image).shape)
+    #(480, 640)
+
+    #data = dict(img=image)
+
+    #img_info -> name , intrinsics
+
+    # for x in data_infos['images']:
+    #     if osp.basename(x['file_name']) != osp.basename(image):
+    #         continue
+    #     img_info = x
+    #     break
+
+    # img = results['img']
+    #     if self.to_float32:
+    #         img = img.astype(np.float32)
+
+    #     results['filename'] = None
+    #     results['ori_filename'] = None
+    #     results['img'] = img
+    #     results['img_shape'] = img.shape
+    #     results['ori_shape'] = img.shape
+    #     results['img_fields'] = ['img']
+    #     return results
+    
+    data = dict(
+        img=image,
+        img_shape=image.shape,
+        ori_shape=image.shape,
+        img_prefix=[], #osp.dirname(image)
+        img_info= dict(cam_intrinsic=intrinsics.tolist()), # dict(filename=osp.basename(image)),
+        cam2img = intrinsics.tolist(),
+        box_type_3d=box_type_3d,
+        box_mode_3d=box_mode_3d,
+        img_fields=['img'],
+        bbox3d_fields=[],
+        pts_mask_fields=[],
+        pts_seg_fields=[],
+        bbox_fields=[],
+        mask_fields=[],
+        seg_fields=[])
+
+    # camera points to image conversion
+    # if box_mode_3d == Box3DMode.CAM:
+    #     data['img_info'].update(dict(cam_intrinsic=img_info['cam_intrinsic']))
+
+
+    ###### 
+    data = test_pipeline(data)
+
+    data = collate([data], samples_per_gpu=1)
+    if next(model.parameters()).is_cuda:
+        # scatter to specified GPU
+        data = scatter(data, [device.index])[0]
+    else:
+        # this is a workaround to avoid the bug of MMDataParallel
+        data['img_metas'] = data['img_metas'][0].data
+        data['img'] = data['img'][0].data
+
+    # forward the model
+    with torch.no_grad():
+        #print(time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.gmtime()), "nograd")
+        start = time.time()
+        result = model(return_loss=False, rescale=True, **data)
+        #print(time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.gmtime()), "result retrieved, duration: ", time.time() - start)
+    return result, data
+
 
 def inference_mono_3d_detector(model, image, ann_file):
     """Inference image with the monocular 3D detector.
@@ -263,6 +352,8 @@ def inference_mono_3d_detector(model, image, ann_file):
         seg_fields=[])
 
     # camera points to image conversion
+
+    print(img_info['cam_intrinsic'])
     if box_mode_3d == Box3DMode.CAM:
         data['img_info'].update(dict(cam_intrinsic=img_info['cam_intrinsic']))
 
@@ -483,6 +574,13 @@ def show_proj_det_result_meshlab(data,
     # filter out low score bboxes for visualization
     if score_thr > 0:
         inds = pred_scores > score_thr
+        pred_bboxes = pred_bboxes[inds]
+
+    class_id = 2
+    filter_class = True
+    pred_classes = result[0]['labels_3d'].numpy()
+    if filter_class:
+        inds = pred_classes ==  class_id
         pred_bboxes = pred_bboxes[inds]
 
     box_mode = data['img_metas'][0][0]['box_mode_3d']

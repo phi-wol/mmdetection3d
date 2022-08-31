@@ -87,36 +87,36 @@ class SingleStageMono3DDetector(SingleStageDetector):
                 The outer list corresponds to each image. The inner list
                 corresponds to each class.
         """
-        with Benchmark("simple_test"):
-            with Benchmark("simple_test.extract_feat"):
-                x = self.extract_feat(img)
-            with Benchmark("simple_test.bbox_head"):
-                outs = self.bbox_head(x)
-            with Benchmark("simple_test.get_bboxes"):    
-                bbox_outputs = self.bbox_head.get_bboxes(
-                    *outs, img_metas, rescale=rescale)
+        #with Benchmark("simple_test"):
+            #with Benchmark("simple_test.extract_feat"):
+        x = self.extract_feat(img)
+            #with Benchmark("simple_test.bbox_head"):
+        outs = self.bbox_head(x)
+            #with Benchmark("simple_test.get_bboxes"):    
+        bbox_outputs = self.bbox_head.get_bboxes(
+            *outs, img_metas, rescale=rescale)
 
-            with Benchmark("simple_test.other"):
-                if self.bbox_head.pred_bbox2d:
-                    from mmdet.core import bbox2result
-                    bbox2d_img = [
-                        bbox2result(bboxes2d, labels, self.bbox_head.num_classes)
-                        for bboxes, scores, labels, attrs, bboxes2d in bbox_outputs
-                    ]
-                    bbox_outputs = [bbox_outputs[0][:-1]]
+            #with Benchmark("simple_test.other"):
+        if self.bbox_head.pred_bbox2d:
+            from mmdet.core import bbox2result
+            bbox2d_img = [
+                bbox2result(bboxes2d, labels, self.bbox_head.num_classes)
+                for bboxes, scores, labels, attrs, bboxes2d in bbox_outputs
+            ]
+            bbox_outputs = [bbox_outputs[0][:-1]]
 
-                bbox_img = [
-                    bbox3d2result(bboxes, scores, labels, attrs)
-                    for bboxes, scores, labels, attrs in bbox_outputs
-                ]
-                
-                # TODO: nested structure really necessary?
-                bbox_list = [dict() for i in range(len(img_metas))]
-                for result_dict, img_bbox in zip(bbox_list, bbox_img):
-                    result_dict['img_bbox'] = img_bbox
-                if self.bbox_head.pred_bbox2d:
-                    for result_dict, img_bbox2d in zip(bbox_list, bbox2d_img):
-                        result_dict['img_bbox2d'] = img_bbox2d
+        bbox_img = [
+            bbox3d2result(bboxes, scores, labels, attrs)
+            for bboxes, scores, labels, attrs in bbox_outputs
+        ]
+        
+        # TODO: nested structure really necessary?
+        bbox_list = [dict() for i in range(len(img_metas))]
+        for result_dict, img_bbox in zip(bbox_list, bbox_img):
+            result_dict['img_bbox'] = img_bbox
+        if self.bbox_head.pred_bbox2d:
+            for result_dict, img_bbox2d in zip(bbox_list, bbox2d_img):
+                result_dict['img_bbox2d'] = img_bbox2d
 
         return bbox_list
 
