@@ -54,6 +54,8 @@ import torch
 # root net
 from .DMPPE_ROOTNET_RELEASE.main.config import cfg as root_cfg
 from .DMPPE_ROOTNET_RELEASE.main.model import get_pose_net as  get_root_net
+from .DMPPE_ROOTNET_RELEASE.common.utils.pose_utils import process_bbox
+from .DMPPE_ROOTNET_RELEASE.data.dataset import generate_patch_image
 
 # pose net
 from .DMPPE_POSENET_RELEASE.main.config import cfg as pose_cfg
@@ -81,7 +83,7 @@ from mmdet3d.apis.inference import direct_inference_mono_3d_detector, init_model
 from tqdm import tqdm
 
 MAX_FRAMES = 10
-det_id2str = {0: 'pedestrian', 1:'cyclist', 2:'car'}
+#det_id2str = {0: 'pedestrian', 1:'cyclist', 2:'car'}
 
 from .ab3dmot.Xinshuo_PyToolbox.xinshuo_visualization.geometry_vis import random_colors
 # TODO: mit mmdet_viz vereinheitlichen
@@ -101,6 +103,8 @@ import open3d.visualization.rendering as rendering
 from open3d import geometry
 
 import itertools
+
+from scipy.spatial.transform import Rotation as R
 
 # JSON Serialization
 def _to_dict(obj):
@@ -260,6 +264,37 @@ class VideoFrames():
     def __len__(self) -> int:
         return self.frame_count
 
+def rescale_bbox(bbox, new_width, new_height, border_scale = 1.0):
+    # aspect ratio preserving bbox
+    w = bbox[2]
+    h = bbox[3]
+    c_x = bbox[0] + w/2.
+    c_y = bbox[1] + h/2.
+    aspect_ratio = new_width/new_height
+    if w > aspect_ratio * h:
+        h = w / aspect_ratio
+    elif w < aspect_ratio * h:
+        w = h * aspect_ratio
+    bbox[2] = w*border_scale
+    bbox[3] = h*border_scale
+    bbox[0] = c_x - bbox[2]/2.
+    bbox[1] = c_y - bbox[3]/2.
+    return bbox
+
+def rotation_matrix_from_vectors(vec1, vec2):
+    """ Find the rotation matrix that aligns vec1 to vec2
+    :param vec1: A 3d "source" vector
+    :param vec2: A 3d "destination" vector
+    :return mat: A transform matrix (3x3) which when applied to vec1, aligns it with vec2.
+    """
+    a, b = (vec1 / np.linalg.norm(vec1)).reshape(3), (vec2 / np.linalg.norm(vec2)).reshape(3)
+    v = np.cross(a, b)
+    c = np.dot(a, b)
+    s = np.linalg.norm(v)
+    kmat = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+    rotation_matrix = np.eye(3) + kmat + kmat.dot(kmat) * ((1 - c) / (s ** 2))
+    return rotation_matrix
+
 class Perception():
     def _instances_to_detections(self, instances: Instances, class_ids): #  -> List[Detection]
         detections = list()
@@ -295,10 +330,34 @@ class Perception():
             if 'ids' in instances.keys():
                 instance_id = instances['ids'][i].item()
 
-            detection = Detection9D(x, y, z, l, w, h, alpha, beta, gamma, score, det_id2str[pred_class], instance_id)
+            detection = Detection9D(x, y, z, l, w, h, alpha, beta, gamma, score, self.det_id2str[pred_class], instance_id)
             detections.append(detection)
         return detections
-    
+
+    def _twostage_to_detections9d(self, instances: list) -> List[Detection9D]:
+        # assume a list of smoke results, each encodes only one detection
+        detections = list()
+        for i in range(len(instances)):
+            print("Instance Debug: ", instances[i])
+            box = instances[i]['boxes_3d'].tensor[0].tolist()
+            if len(box) == 9: 
+                x, y, z, l, w, h, alpha, beta, gamma = box
+            elif len(box) == 7: 
+                x, y, z, l, w, h, beta = box
+                alpha = 0.
+                gamma = 0.
+            else:
+                print("Send help!")
+            score, pred_class = instances[i]['scores_3d'][0].item(), instances[i]['labels_3d'][0].item()
+            
+            instance_id = None
+            if 'ids' in instances[i].keys():
+                instance_id = instances[i]['ids'][0].item()
+
+            detection = Detection9D(x, y, z, l, w, h, alpha, beta, gamma, score, self.det_id2str[pred_class], instance_id)
+            detections.append(detection)
+        return detections
+
     def set_intrinsics(self, focal, princpt):
         self.focal=focal
         self.princpt=princpt
@@ -312,14 +371,13 @@ class Perception():
         date = datetime.now().strftime("%Y%m%d_%I%M%S")
         print(f"filename_{date}")
 
-        root_dir = f"./output3/{date}-" + result_file + "-humans/"
+        root_dir = f"./output4/{date}-" + result_file + "-humans/"
 
         pathlib.Path(root_dir).mkdir(parents=True, exist_ok=True) 
 
         output_fps = int(video_frames.fps / fps_divisor)  #* video_frames.frame_count
         print("OutputFPS: ", output_fps)
         print("VideoOriginalFPS: ", video_frames.fps)
-
 
         if visualize: 
             fourcc = cv2.VideoWriter_fourcc(*"MP4V")
@@ -328,7 +386,6 @@ class Perception():
             out_2d = cv2.VideoWriter(root_dir + result_file + "_keypoint_2d.mp4", fourcc, output_fps, video_frames.get_output_size())
             #out_3d = cv2.VideoWriter(root_dir + result_file + "_keypoint_3d.mp4", fourcc, video_frames.fps, video_frames.get_output_size())
 
-        
         frame_id = 0
 
         sort_per_class_id = dict()
@@ -417,7 +474,6 @@ class Perception():
 
                     tracked_detection_sequence[frame_id].extend([tracked_detection for tracked_detection in tracked_detections])
 
-
                     
                     if visualize:
                         # Visualization
@@ -434,13 +490,10 @@ class Perception():
                 object_id_list = [det.instance_id for det in tracked_detection_sequence[frame_id]]
 
                 # root_net inference:
-
                 root_depth_list = inference_root_net_single_frame(frame_original.copy(), bbox_list, root_model, focal=self.focal, princpt=self.princpt)
-                # TODO: save
 
                 # pose_net inference
                 output_pose_2d_list, output_pose_3d_list, vis_img = inference_pose_net_single_frame(frame_original.copy(), bbox_list, root_depth_list, pose_model, focal=self.focal, princpt=self.princpt)
-                # TODO: save
 
                 if visualize: 
                     cv2.imwrite(root_dir + result_file + '_pose_2d_{:04d}.jpg'.format(frame_id), vis_img)
@@ -527,34 +580,35 @@ class Perception():
             output_file_name = root_dir + result_file + "_keypoint_3d.gif"
 
             frames = [Image.open(image) for image in sorted(list_3d_images)]
-
-            print(len(frames))
-
-            print(list_3d_images)
-            frame_one = frames[0]
+            if len(frames) > 0: 
+                frame_one = frames[0]
 
 
-            sec = video_frames.frame_count / video_frames.fps
-            test = len(frames) / sec
-            print(test)
-            print(1000/test)
-            
-            frame_one.save(output_file_name, format="GIF", append_images=frames,
-                save_all=True, duration= 1000/test, loop=0) # int(len(frames) / output_fps) *
-
-        # out_3d = cv2.VideoWriter(output_file_name, fourcc, output_fps, size)
- 
-        # for i in range(len(img_array)):
-        #     out_3d.write(img_array[i])
-        # out_3d.release()
-
+                sec = video_frames.frame_count / video_frames.fps
+                test = len(frames) / sec
+                print(test)
+                print(1000/test)
+                
+                frame_one.save(output_file_name, format="GIF", append_images=frames,
+                    save_all=True, duration= 1000/test, loop=0) # int(len(frames) / output_fps) *
         return tracked_detection_sequence
 
-    def track_3d_bbbox_sequence(self, video_frames: VideoFrames, visualize=False, score_threshold=-0.1, intrinsics=None, file_name="", args_config=None, args_checkpoint=None, fps_divisor=1) -> Dict[int, List[Detection9D]]:
+    def track_3d_bbbox_sequence(self, video_frames: VideoFrames, visualize=False, score_threshold=-0.1, intrinsics=None, file_name="", args_config=None, args_checkpoint=None, fps_divisor=1, focus_object='car', two_stage=False) -> Dict[int, List[Detection9D]]:
+        
+        if args_config is None and focus_object == 'chair':
+            args_config = './configs/smoke9D_objectron_generalize_full_ds_multigpu_two_classes_video.py'
+            args_checkpoint = './configs/smoke9D_generalize_chair_book_2022_05_04_multi_full_epoch_10.pth'
+            self.det_id2str = {0:'chair', 1:'book'}
 
-        if args_config is None:
-            args_config = './input/smoke9D_objectron_generalize_full_ds_multigpu_two_classes_video.py'
-            args_checkpoint = './output/generalize_chair_book_2022_05_04_multi_full/epoch_10.pth'
+        if args_config is None and focus_object == 'car':
+            args_config = './configs/smoke_dla34_pytorch_dlaneck_gn-all_8x4_6x_kitti-mono3d_video.py'
+            args_checkpoint = './configs/smoke_dla34_pytorch_dlaneck_gn-all_8x4_6x_kitti-mono3d_original.pth'
+            self.det_id2str = {0: 'pedestrian', 1:'cyclist', 2:'car'}
+
+        if args_config is None and focus_object == 'bike':
+            args_config = './configs/smoke9D_objectron_generalize_full_ds_multigpu_bike_video.py'
+            args_checkpoint = './configs/smoke9D_2022_07_18_generalize_bike_multi_full_epoch_28.pth'
+            self.det_id2str = {0: 'bike', 1:'chair', 2:'book'}
 
         args_device = 'cuda:0'
 
@@ -563,10 +617,11 @@ class Perception():
         date = datetime.now().strftime("%Y%m%d_%I%M%S")
         print(f"filename_{date}")
 
-        root_dir = f"./output3/{date}-" + result_file + "-cars/"
+        root_dir = f"./output4/{date}-" + result_file + f"-objects/"
 
         pathlib.Path(root_dir).mkdir(parents=True, exist_ok=True) 
 
+        # TODO: check output fps
         output_fps = int(video_frames.fps / fps_divisor) # * video_frames.frame_count
         if output_fps ==0:
             output_fps = 1
@@ -574,10 +629,15 @@ class Perception():
         print("VideoOriginalFPS: ", video_frames.fps)
         
         detector = init_model(args_config, args_checkpoint, device=args_device)
+        detector_first_stage_2d = Detector('det')
 
-        #print(intrinsics.as_matrix_3x3())
+        if focus_object == "bike":
+            focus_object = "bicycle"
 
-        #detector = Detector("det")
+        focus_class_id = detector_first_stage_2d.get_detection_classes_list().index(focus_object)
+
+        if focus_object == "bicycle":
+            focus_object = "bike"
         
         if visualize: 
             fourcc = cv2.VideoWriter_fourcc(*"MP4V")
@@ -589,6 +649,7 @@ class Perception():
         sort_per_class_id = dict()
 
         raw_detection_sequence = {}
+        raw_detection_sequence_2s = {}
         tracked_detection_sequence = {}
 
         mot_tracker = AB3DMOT(max_age=20, min_hits=7) 
@@ -599,65 +660,159 @@ class Perception():
 
             if frame_id % fps_divisor == 0:
 
-                #cv2.imwrite(root_dir + result_file + '_raw_image_{:04d}.jpg'.format(frame_id), frame)
+                two_stage = True
+                if two_stage:
+                    
+                    # use portrait intrinsics for the prediction on portrait-aspect-ratio crops
+                    f_x=1492.
+                    f_y=1492.
+                    h=1920.
+                    w=1440.
+                    o_x=720.
+                    o_y=960.
 
-                # SIMPLE FRAME-BASED PREDICTIONS
+                    camera_intrinsics_portrait = CameraIntrinsics(float(f_x), float(f_y), float(h), float(w), float(o_x), float(o_y))
+                    
+                    frame_2d = frame.copy()
 
-                #prediction = detector.get_prediction(frame)
+                    original_img_height, original_img_width = frame.shape[:2]
 
-                # TODO: resize image and camera intrinsics
+                    # TODO: for all detections loop smoke9D -> turn loop into parallel application of smoke9d on multiple crops
+                    prediction = detector_first_stage_2d.get_prediction(frame_2d)
+                    instances = prediction["instances"].to("cpu")
+                    instances = instances[instances.scores > score_threshold]
+
+                    # filter for specific classes
+                    instances = instances[instances.pred_classes == focus_class_id]
+
+                    prediction["instances"] = instances
+                    detections_2d = self._instances_to_detections(instances, detector_first_stage_2d.get_detection_classes_list())
+                    bbox_list = [[det.x1, det.y1, det.w, det.h] for det in detections_2d]
+                    object_num = len(bbox_list)
+                    results = []
+
+                    for n in range(object_num): # object_num TODO: concatenate results to detect multiple objects
+                        bbox = process_bbox(np.array(bbox_list[n]), original_img_width, original_img_height)
+                        # w = bbox[2]
+                        # h = bbox[3]
+                        # c_x = bbox[0] + w/2.
+                        # c_y = bbox[1] + h/2.
+                        input_shape = (640, 480) # height, width
+                        # new aspect ratio for Smoke9D
+                        bbox = rescale_bbox(bbox, new_width=input_shape[1], new_height=input_shape[0])
+                        # new bounding box encodings
+                        w = bbox[2]
+                        h = bbox[3]
+                        c_x = bbox[0] + w/2.
+                        c_y = bbox[1] + h/2.
+                        # Extend the bounding box to match the aspect ratio for input images of SMOKE9D
+                        # img2bb_trans should only be a scaling, as we do not rotate the patch
+                        img, img2bb_trans = generate_patch_image(frame_2d, bbox, False, 0.0, input_shape) 
+                        img = img[:,:,::-1] # RGB to BGR
+                        patch_scaling_factor = img2bb_trans[0,0] 
+
+                        debug_patch_generation = False
+                        if debug_patch_generation: 
+                            cv2.imwrite(root_dir + '_debug_image_patches_' + str(frame_id) + '_' + str(n) + '.jpg', img)
+
+                        # adjust intrinsics matrix to objectron input space
+                        intrinsics_matrix_tmp = camera_intrinsics_portrait.as_matrix_3x3() / 3.0
+                        intrinsics_matrix_tmp[2,2] = 1.0 
+                        
+                        # inference on estimated bounding box
+                        result, data = direct_inference_mono_3d_detector(detector, img, intrinsics_matrix_tmp)
+
+                        result = result[0]['img_bbox']
+                        if len(result['scores_3d']) == 0:
+                            # discard: no prediction of smoke
+                            continue
+
+                        # Transform result back to the original camera coordinate space
+                        det = self._instances_to_detections9d(result)[0] # assume only one SMOKE prediction per crop - first corresponds to best score?
+                        tensor = det.get_tensor()
+                        boxes = CameraInstance3DBoxes(np.array([tensor]))
+
+                        if det.score < score_threshold or det.class_name != focus_object:
+                            continue
+
+                        # TODO: resolve later
+                        det.instance_id = 0
+
+                        color_tmp = tuple([int(tmp * 255) for tmp in colors[int(det.instance_id) % max_color]])
+
+                        intm =intrinsics_matrix_tmp
+                        
+                        debug_second_stage = True
+                        if debug_second_stage: 
+                            image_box = draw_camera_bbox3d_on_img(
+                            boxes, img, intm, None, color=color_tmp, thickness=1, object_id=int(det.instance_id), class_type=det.class_name)
+                            cv2.imwrite(root_dir + result_file + '_bbox_debug_crop_{:04d}_{}.jpg'.format(frame_id, n), image_box)
+
+                        # adjust depth for cropping and rescaling
+                        tensor[2] = tensor[2] * 3. * patch_scaling_factor 
+
+                        # adjust 2D crop translation
+                        image_offset = np.array([c_x, c_y, 1.]).reshape((3,1)) * tensor[2] # 
+                        intrinsics_original = intrinsics.as_matrix_3x3()
+                        image_offset_3d = np.matmul(np.linalg.inv(intrinsics_original), image_offset)
+
+                        image_offset_3d_tensor = np.zeros(9)
+                        image_offset_3d_tensor[:2] = image_offset_3d[:2].reshape((1,2))
+                        result['boxes_3d'].tensor += image_offset_3d_tensor
+                        result['boxes_3d'].tensor[0,2] = tensor[2]
+                        
+                        # transform allocentrinc rotation of the crop back to egocentric camera coordinates
+                        o_x =  intrinsics_original[0, 2] # principal point in x
+                        o_y = intrinsics_original [1, 2] # principal point in y
+                        f_x = intrinsics_original[0, 0]
+                        f_y = intrinsics_original[1, 1]
+                        o_ray = np.array([(c_x-o_x)/f_x, (c_y-o_y)/f_y, 1.0])
+                        a_ray = np.array([0.0, 0.0, 1.0])
+                        o_ray_norm = o_ray/np.linalg.norm(o_ray)
+                        R_o = rotation_matrix_from_vectors(a_ray, o_ray)
+
+                        # decode euler rotation into rotation matrix
+                        R_allocentric = R.from_euler('xyz', tensor[6:9]).as_matrix()
+                        R_egocentric = np.matmul(R_o, R_allocentric)
+                        euler_new = R.from_matrix(R_egocentric).as_euler('xyz')
+                        result['boxes_3d'].tensor[0,6:9] = torch.tensor(euler_new)
+
+                        results.append(result)
+
+                    # if no object was detected in the first stage:
+                    # create empty detection
+                    if object_num == 0:
+                        # results = [{'boxes_3d': [], 'scores_3d': torch.tensor([]), 'labels_3d': torch.tensor([])}]
+                        raw_detections_2s = []
+                    else:
+                        # aggregate multiple detections
+                        raw_detections_2s = self._twostage_to_detections9d(results)
+                    
+                    raw_detection_sequence_2s[frame_id] = [det for det in raw_detections_2s]
+
+                # original SMOKE9D on whole image
                 result, data = direct_inference_mono_3d_detector(detector, frame, intrinsics.as_matrix_3x3())
 
                 result = result[0]['img_bbox']
-                # print(result)
-                # print(result['boxes_3d'].tensor)
-                # print(len(result['scores_3d']))
-                # print(result['labels_3d'])
-                
-                # instances = Instances(image_size = frame.shape, fields={
-                #     'pred_boxes': result['boxes_3d'],  #.tensor
-                #     'scores': result['scores_3d'], 
-                #     'pred_classes': result['labels_3d']})
 
-                # print(instances)
-                # print(instances.pred_boxes)
-
+                # DO we need tracking if only one focusObject is assumed?
                 output = []
                 for ann_id in range(len(result['scores_3d'])):
                     class_type = result['labels_3d'][ann_id]
                     box_2d = [-1, -1, -1, -1]
                     score = result['scores_3d'][ann_id]
                     box_3d = result['boxes_3d'].tensor[ann_id].tolist()
-                    if len(box_3d) == 7:
+                    if len(box_3d) == 7: # account for the car model, only jaw is detected
                         box_3d = box_3d[:6] + [0., box_3d[6], 0.]
 
                     output.append([frame_id] + [class_type.tolist()] + box_2d + [score.tolist()] + box_3d)
-                
-                #print(output)
-                
-                #result['boxes_3d'].tensor, result['scores_3d'], result['labels_3d']
-
-                
-
-                #{'instances': Instances(num_instances=0, image_height=216, image_width=384, fields=[pred_boxes: Boxes(tensor([], device='cuda:0', size=(0, 4))), scores: tensor([], device='cuda:0'), pred_classes: tensor([], device='cuda:0', dtype=torch.int64)])}
-
-                #instances = instances[instances.scores > score_threshold]
-                #TODO: prediction["instances"] = instances
-
-                #results to instances
-
-                # function results to detections
-                # TODO: raw_detections = self._instances_to_detections(instances, detector.get_detection_classes_list())
 
                 raw_detections =self._instances_to_detections9d(result)
 
-                #print(raw_detections)
-
-                # print(frame_id, detections)
                 raw_detection_sequence[frame_id] = [raw_detection for raw_detection in raw_detections]
 
                 with open(root_dir + "cbbox_{:04d}.json".format(frame_id), "wt") as file:
-                    json.dump(raw_detection_sequence[frame_id], file, default=_to_dict)          
+                    json.dump(raw_detection_sequence_2s[frame_id], file, default=_to_dict)          
 
                 # CLASS-WISE TRACKING
                 # AB3DMOT
@@ -701,7 +856,7 @@ class Perception():
                     # ori_tmp = d[8:11]
                     #print('Class: ', d[10])
                     pred_class = d[10]
-                    type_tmp = det_id2str[pred_class] # 11
+                    type_tmp = self.det_id2str[pred_class] # 11
                     bbox2d_tmp_trk = d[11:15] # 16
                     conf_tmp = d[15]
 
@@ -782,13 +937,13 @@ class Perception():
 
                 if visualize:
                     
-                    image_tmp = frame
+                    image_tmp = frame.copy()
                     for det in raw_detections:
                         tensor = det.get_tensor()
                         #tensor[2] = tensor[2] / 1.87
                         boxes = CameraInstance3DBoxes(np.array([tensor]))
 
-                        if det.score < score_threshold or det.class_name != "car":
+                        if det.score < score_threshold or det.class_name != focus_object:
                             continue
 
                         # TODO: resolve later
@@ -807,25 +962,50 @@ class Perception():
                         image_tmp = draw_camera_bbox3d_on_img(
                         boxes, image_tmp, intm, None, color=color_tmp, thickness=1, object_id=int(det.instance_id), class_type=det.class_name)
 
-                        cv2.imwrite(root_dir + result_file + '_bbox_car_{:04d}.jpg'.format(frame_id), image_tmp)
+                        cv2.imwrite(root_dir + result_file + '_bbox_focusObject_{:04d}.jpg'.format(frame_id), image_tmp)
 
                         # out_raw.write(image_tmp)
 
+
+                    image_tmp = frame.copy()
+                    for det in raw_detections_2s:
+                        tensor = det.get_tensor()
+                        #tensor[2] = tensor[2] / 1.87
+                        boxes = CameraInstance3DBoxes(np.array([tensor]))
+
+                        if det.score < score_threshold or det.class_name != focus_object:
+                            continue
+
+                        # TODO: resolve later
+                        det.instance_id = 0
+
+                        color_tmp = tuple([int(tmp * 255) for tmp in colors[int(det.instance_id) % max_color]])
+                        
+
+                        # TODO: add class label to plot
+                        print(det.instance_id)
+
+                        intm = intrinsics.as_matrix_3x3()
+                        #intm[:2, :2] = intm[:2, :2] / 1.87
+                        print("Intrinscis: ", intm)
+
+                        image_tmp = draw_camera_bbox3d_on_img(
+                        boxes, image_tmp, intm, None, color=color_tmp, thickness=1, object_id=int(det.instance_id), class_type=det.class_name)
+
+                        cv2.imwrite(root_dir + result_file + '_bbox_focusObject_{:04d}_2s.jpg'.format(frame_id), image_tmp)
+
             frame_id += 1
-            #print(".", end="")
 
-            # if frame_id > 20:
-            #     break
+        print("All results", raw_detection_sequence_2s)
 
-        with open(root_dir + "car_raw_detections.json", "wt") as file:
-            json.dump(raw_detection_sequence, file, default=_to_dict)
+        with open(root_dir + "focusObject_raw_detections.json", "wt") as file:
+            json.dump(raw_detection_sequence_2s, file, default=_to_dict)
         
-        with open(root_dir + "car_tracked_detections.json", "wt") as file:
+        with open(root_dir + "focusObject_tracked_detections.json", "wt") as file:
             json.dump(tracked_detection_sequence, file, default=_to_dict)
 
         if visualize:
             out.release() 
-            #out_raw.release()
 
         return tracked_detection_sequence
 
@@ -862,55 +1042,21 @@ class KeyFrameSelector():
         return None
 
 class Event():
-    def __init__(self, event_type, data, time_stamp) -> None:
+    def __init__(self, event_type, data, time_stamp, frame_nr) -> None:
         self.type = event_type
         self.time_stamp = time_stamp
         self.event_data = data
+        self.frame_nr = frame_nr
 
     def to_dict(self) -> dict:
         return {
             "type": self.type,
             "time_stamp": self.time_stamp,
-            "event_data": self.event_data
+            "event_data": self.event_data,
+            "frame_nr": self.frame_nr
         }
 
 class CLI():
-    @staticmethod
-    def detect_old(mov_filename, mode, custom=True, landscape=False, fps_divisor=1):
-        #camera_intrinsics = CameraIntrinsics()
-        #trajectory = Trajectory(csv_filename)
-
-        print(custom)
-        print(landscape)
-        print(fps_divisor)
-
-        video_frames = VideoFrames(mov_filename, flip=custom, landscape=landscape)
-
-        perception = Perception()
-
-        if custom:
-            perception.set_intrinsics([1447, 1447], [924, 720]) # portrait
-        else:
-            perception.set_intrinsics([1500, 1500], None) # standard
-
-        if landscape: 
-            perception.set_intrinsics([1447, 1447], [962, 682])# landscape
-
-        tracked_detection_sequence = perception.track_human_sequence(video_frames, visualize=True, mode=mode, file_name=mov_filename,  fps_divisor=fps_divisor)
-        
-        #video_frames = VideoFrames(mov_filename)
-
-
-        # output for a single input video:
-
-        # dictionary: for every frame:
-        # list of person keypoints in 3d 
-        # list of object 3d bounding boxes
-
-
-
-        # + SMOKE Output
-
     @staticmethod
     def detect_humans(mov_filename, mode, custom=True, landscape=False, fps_divisor=1, visualize=False):
         #camera_intrinsics = CameraIntrinsics()
@@ -934,9 +1080,6 @@ class CLI():
             perception.set_intrinsics([1447, 1447], [962, 753])# landscape # other way round: 682
 
         tracked_detection_sequence = perception.track_human_sequence(video_frames, visualize=visualize, mode=mode, file_name=mov_filename,  fps_divisor=fps_divisor)
-        
-        #video_frames = VideoFrames(mov_filename)
-
 
         # output for a single input video:
 
@@ -976,15 +1119,6 @@ class CLI():
             # 1280-530 = 750
             # 750 / 2 = 375
             video_frames = VideoFrames(mov_filename, downsampling=1, throttle=1, flip=True, landscape=True, pad=[0,0,pad_x, pad_x], resize=(h, w))
-
-            # f_x = 
-            # f_y = 
-
-            # h = 
-            # w = 
-
-            # o_x = 
-            # o_y = 
 
             # TODO: scaling of images for pretrained smoke
 
@@ -1035,6 +1169,24 @@ class CLI():
         perception7d = Perception()
         # todo: output without tracking of ab3dmot
         tracked_detection_sequence = perception7d.track_3d_bbbox_sequence(video_frames, visualize=True, intrinsics=camera_intrinsics, file_name=mov_filename, args_config=args_config, args_checkpoint=args_checkpoint, fps_divisor=fps_divisor)
+
+    @staticmethod
+    def detect_objectron_objects(mov_filename, landscape=False, fps_divisor=1, args_config=None, args_checkpoint=None, fobject='bike', f_x=1492., f_y=1492., h=1920., w=1440., o_x=720., o_y=960.):
+        perception = Perception()
+        if landscape:
+            f_x=1445.
+            f_y=1445.
+            h=1440.
+            w=1920.
+            o_x=960.
+            o_y=720 #753.
+            video_frames = VideoFrames(mov_filename, downsampling=1, throttle=1, flip=True, landscape=True, pad=[])
+        else:
+            video_frames = VideoFrames(mov_filename, downsampling=1, throttle=1, flip=False, landscape=False, pad=[])
+
+        camera_intrinsics = CameraIntrinsics(float(f_x), float(f_y), float(h), float(w), float(o_x), float(o_y))
+
+        perception.track_3d_bbbox_sequence(video_frames, visualize=True, score_threshold=-0.1, intrinsics=camera_intrinsics, file_name=mov_filename, args_config=args_config, args_checkpoint=args_checkpoint, fps_divisor=fps_divisor, focus_object=fobject)
 
     @staticmethod
     def visualize_cars(input_folder='./output3/20220818_032614-car_multi_person_1-cars', frame_index=0, f_x=1445, f_y=1445, h=1440, w=1920, o_x=960, o_y=753):
@@ -1144,7 +1296,7 @@ class CLI():
 
         date = datetime.now().strftime("%Y%m%d_%I%M%S")
         folder_name = input_file.split('-')[-2]
-        output_path = f"./output3/{date}-" + folder_name + "-3d_viz_{:04d}".format(frame_index)
+        output_path = f"./output4/{date}-" + folder_name + "-3d_viz_{:04d}".format(frame_index)
         print(output_path)
 
 
@@ -1268,16 +1420,16 @@ class CLI():
         #o3d.visualization.draw_geometries(
 
     @staticmethod
-    def merge_detections(car_dir='./output2/20220816_072310-car_multi_person_1-cars', human_dir='./output2/20220816_074530-car_multi_person_1-humans'):
+    def merge_detections(object_dir='./output2/20220816_072310-car_multi_person_1-cars', human_dir='./output2/20220816_074530-car_multi_person_1-humans'):
         
         list_human = glob.glob(human_dir + '/hkp3d_*.json')
 
-        list_car = glob.glob(car_dir + '/cbbox_*.json')
+        list_object = glob.glob(object_dir + '/cbbox_*.json')
 
         list_human.sort()
-        list_car.sort()
-        print(list_human[:5])
-        print(list_car[:5])
+        list_object.sort()
+        # print(list_human[:5])
+        # print(list_object[:5])
 
         keypoint_list = []
         bboxes_list = []
@@ -1287,35 +1439,31 @@ class CLI():
                 human_frame = json.load(file)
             
             keypoint_list.append(human_frame)
-        
-        #print(keypoint_list)
 
-        for file_name in list_car:
+        for file_name in list_object:
             with open(file_name, "rt") as file:
-                car_frame = json.load(file)
+                object_frame = json.load(file)
             
-            bboxes_list.append(car_frame)
-
-        #print(bboxes_list)
+            bboxes_list.append(object_frame)
 
         assert len(keypoint_list) == len(bboxes_list), 'Length of keypoint & bboxes frames does not match!'
 
         merged_dict = {}
 
-        for frame_id in range(len(keypoint_list)):
+        for frame_id in range(len(keypoint_list)): # just the list index
             
-            video_id = int(list_human[frame_id].split('_')[-1].split('.')[0])
+            video_id = int(list_human[frame_id].split('_')[-1].split('.')[0]) # real frame index in the video
 
             merged_dict[video_id] = {
                 "humans": keypoint_list[frame_id],
-                "cars": bboxes_list[frame_id]
+                "objects": bboxes_list[frame_id]
             }
 
         date = datetime.now().strftime("%Y%m%d_%I%M%S")
 
         folder_name = human_dir.split('-')[-2]
 
-        output_path = f"./output3/{date}-" + folder_name + "-scene_frames.json"
+        output_path = f"./output4/{date}-" + folder_name + "-scene_frames.json"
 
         with open(output_path, "wt") as file:
             json.dump(merged_dict, file, default=_to_dict) 
@@ -1585,7 +1733,7 @@ class CLI():
             event_type = 'initial_human_pose'
             event_data = (person_id, keypoints_tmp[0])
             time_stamp = time_axis[0]
-            event_log.append(Event(event_type, event_data, time_stamp))
+            event_log.append(Event(event_type, event_data, time_stamp, keypoints_frames[0]))
 
             for i in range(1,len(moving_standing)):
                 if moving_standing[i] == 1:
@@ -1595,17 +1743,17 @@ class CLI():
                 if moving_standing[i-1] == 0 and moving_standing[i] == 1:
                     
                     event_type = 'person_starts_moving'
-                    event_data = (person_id, keypoints_tmp[i-1])
+                    event_data = (person_id, keypoints_tmp[(i-1) * down_sampling])
                     time_stamp = time_axis[i-1]
-                    event_log.append(Event(event_type, event_data, time_stamp))
+                    event_log.append(Event(event_type, event_data, time_stamp, (i-1) * down_sampling))
                 
                 # person stops moving
                 if moving_standing[i-1] == 1 and moving_standing[i] == 0:
 
                     event_type = 'person_stops_moving'
-                    event_data = (person_id, keypoints_tmp[i])
+                    event_data = (person_id, keypoints_tmp[i * down_sampling])
                     time_stamp = time_axis[i]
-                    event_log.append(Event(event_type, event_data, time_stamp))
+                    event_log.append(Event(event_type, event_data, time_stamp, i * down_sampling))
 
             ax2.set_yticks([0,1])
             ax2.set_yticklabels(['Standing','Moving'])
@@ -1693,7 +1841,7 @@ class CLI():
                     }
                     print("Event_data: ", event_data)
                     time_stamp = time_axis[i]
-                    event_log.append(Event(event_type, event_data, time_stamp))
+                    event_log.append(Event(event_type, event_data, time_stamp, i))
 
                     only_one = True
         print(type(keypoints_along_frames[i]['1']))
@@ -1720,9 +1868,9 @@ class CLI():
             boxes = CameraInstance3DBoxes([np.take(tensor, [0,1,2,3,4,5,7])], box_dim=7)
             boxes_corners = boxes.corners
             corners = boxes_corners[0].tolist()
-            event_data = (0, tensor) # corners
+            event_data = (idx, tensor) # corners
             time_stamp = idx 
-            event_log.append(Event(event_type, event_data, time_stamp))
+            event_log.append(Event(event_type, event_data, time_stamp, bbox_frame_index))
 
         print(event_log)
 
@@ -1874,7 +2022,61 @@ class CLI():
 
             plt.savefig(output_path + "/human_object_distance.pdf")
        
-    
+    def moving_average(x, w):
+        average = np.convolve(x, np.ones(w), 'same') / w
+        average[:w] = average[w]
+        average[-w:] = average[-w]
+        return average
+
+    def butter_lowpass(cutoff, fs, order=5):
+        return butter(order, cutoff, fs=fs, btype='low', analog=False)
+
+    def butter_lowpass_filter(data, cutoff, fs, order=5):
+        b, a = butter_lowpass(cutoff, fs, order=order)
+        y = lfilter(b, a, data)
+        return y
+
+
+    def get_initial_event_poses():
+        pass
+
+    @staticmethod
+    def extract_keyframes_objectron(input_file='./output3/20220819_091024-car_multi_person_7-scene_frames.json', fps=60, bbox_frame_index=500, human_indices=[1]):
+        # MuCo joint set
+        joint_num = 21
+        joints_name = ('Head_top', 'Thorax', 'R_Shoulder', 'R_Elbow', 'R_Wrist', 'L_Shoulder', 'L_Elbow', 'L_Wrist', 'R_Hip', 'R_Knee', 'R_Ankle', 'L_Hip', 'L_Knee', 'L_Ankle', 'Pelvis', 'Spine', 'Head', 'R_Hand', 'L_Hand', 'R_Toe', 'L_Toe')
+        joints_name_dict = {}
+        for i, name in enumerate(joints_name):
+            joints_name_dict[name] = i
+
+        pelvs_idx = 14
+
+        print(joints_name[14])
+        print(joints_name_dict['Pelvis'])
+
+        flip_pairs = ( (2, 5), (3, 6), (4, 7), (8, 11), (9, 12), (10, 13), (17, 18), (19, 20) )
+        skeleton = ( (0, 16), (16, 1), (1, 15), (15, 14), (14, 8), (14, 11), (8, 9), (9, 10), (10, 19), (11, 12), (12, 13), (13, 20), (1, 2), (2, 3), (3, 4), (4, 17), (1, 5), (5, 6), (6, 7), (7, 18) )
+        
+        with open(input_file, "rt") as file:
+            scene_frames_dict = json.load(file)
+
+        frame_index = 0
+        indices = list(scene_frames_dict.keys())
+
+        human_object_dict_tmp = scene_frames_dict[str(bbox_frame_index)] # single frame, preselected
+
+        # reference frame 
+        pred_objects = human_object_dict_tmp["objects"] 
+        pred_humans = human_object_dict_tmp["humans"]
+
+        # get humans present in the selected frame
+        keypoint_ids, keypoint_list = zip(*pred_humans.items()) # TODO: also include human ids, which were not present in the selected frame
+
+        print("pred_objects", pred_objects)
+        print("pred_humans", pred_humans)
+
+        print("human_encoding", pred_humans['1'])
+
 
 if __name__ == "__main__":
     Fire(CLI)
