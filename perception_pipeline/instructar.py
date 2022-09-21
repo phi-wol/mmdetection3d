@@ -107,6 +107,8 @@ import itertools
 from scipy.spatial.transform import Rotation as R
 from scipy.signal import butter, lfilter, freqz
 
+from .key_frame_selector import Event, SkeletonDetection, ChairBox, BikeBox, CarBox, KeyFrameSelector
+
 # JSON Serialization
 def _to_dict(obj):
     return obj.to_dict()
@@ -548,8 +550,6 @@ class Perception():
         #sio.savemat(root_dir + "preds_3d_kpt_mupots.mat" , pred_3d_save)
         #sio.savemat(root_dir +" preds_2d_kpt_mupots.mat", pred_2d_save)
 
-        print(pred_3d_save[0])
-
         with open(root_dir + "preds_3d_kpt_mupots.json", "wt") as file:
             json.dump(pred_3d_save, file)
         
@@ -744,7 +744,7 @@ class Perception():
                         intm =intrinsics_matrix_tmp
                         
                         debug_second_stage = True
-                        if debug_second_stage: 
+                        if debug_second_stage and visualize: 
                             image_box = draw_camera_bbox3d_on_img(
                             boxes, img, intm, None, color=color_tmp, thickness=1, object_id=int(det.instance_id), class_type=det.class_name)
                             cv2.imwrite(root_dir + result_file + '_bbox_debug_crop_{:04d}_{}.jpg'.format(frame_id, n), image_box)
@@ -1010,280 +1010,16 @@ class Perception():
 
         return tracked_detection_sequence
 
-class Event():
-    def __init__(self, event_type, data, time_stamp, frame_nr) -> None:
-        self.type = event_type
-        self.time_stamp = time_stamp
-        self.event_data = data
-        self.frame_nr = frame_nr
-
-    def to_dict(self) -> dict:
-        return {
-            "type": self.type,
-            "time_stamp": self.time_stamp,
-            "event_data": self.event_data,
-            "frame_nr": self.frame_nr
-        }
-
-class SkeletonDetection():
-    def __init__(self, idx, skeleton_param, time_step):
-        self.idx = idx
-        self.skeleton_param = skeleton_param
-        self.time_step = time_step
-
-class KeyFrameSelector():
-    def __init__(self, input_file, scene_frames_dict=None, fps=60) -> None:
-        self.input_file = input_file
-        # MuCo joint set
-        self.joint_num = 21
-        self.joints_name = ('Head_top', 'Thorax', 'R_Shoulder', 'R_Elbow', 'R_Wrist', 'L_Shoulder', 'L_Elbow', 'L_Wrist', 'R_Hip', 'R_Knee', 'R_Ankle', 'L_Hip', 'L_Knee', 'L_Ankle', 'Pelvis', 'Spine', 'Head', 'R_Hand', 'L_Hand', 'R_Toe', 'L_Toe')
-        self.joints_name_dict = {}
-        for i, name in enumerate(self.joints_name):
-            self.joints_name_dict[name] = i
-        
-        self.fps = fps
-
-        self.flip_pairs = ( (2, 5), (3, 6), (4, 7), (8, 11), (9, 12), (10, 13), (17, 18), (19, 20) )
-        self.skeleton = ( (0, 16), (16, 1), (1, 15), (15, 14), (14, 8), (14, 11), (8, 9), (9, 10), (10, 19), (11, 12), (12, 13), (13, 20), (1, 2), (2, 3), (3, 4), (4, 17), (1, 5), (5, 6), (6, 7), (7, 18) )
-        self.scene_frames_dict = scene_frames_dict
-
-        date = datetime.now().strftime("%Y%m%d_%I%M%S")
-        folder_name = self.input_file.split('-')[-2]
-        self.output_path = f"./extracted_keyframes/{date}-" + folder_name + "-key_frames" #
-        pathlib.Path(self.output_path).mkdir(parents=True, exist_ok=True) 
-
-        self.touch_threshold = 0.1
-
-    def run_selection(self):
-        self.pred_objects = self.get_initial_object_poses(bbox_frame_index=0)
-
-        self.keypoints_by_id = self.sort_skeletons_to_ids()
-
-        self.plot_selected_joints_position(selected_joints=['Spine', 'R_Hand', 'L_Hand'], person_ids=['1'])
-
-        distances = self.get_distance_person_object(person_idx = '1', joint_name = 'L_Hand', obj=self.pred_objects[0], visualize=True)
-
-    def get_joint_series(self, selected_joint='R_Hand', person_idx='1'):
-        
-        joint_idx = self.joints_name_dict[selected_joint]
-
-        keypoints = [det.skeleton_param for det in self.keypoints_by_id[person_idx]]
-        frame_ids = np.array([int(det.time_step) for det in self.keypoints_by_id[person_idx]])
-
-        joint_3d_array = np.array([skeleton[joint_idx] for skeleton in keypoints])
-
-        return frame_ids, joint_3d_array
-
-    def plot_selected_joints_position(self, selected_joints=['Spine', 'Pelvis', 'Thorax'], person_ids=['1', '2']):
-        fig = plt.figure(figsize= [10, 15])
-
-        wl = 60
-        down_sampling = 60
-        interval_length = 1 / self.fps * down_sampling
-
-        joint_idxs = []
-        for name in selected_joints:
-            joint_idxs.append(self.joints_name_dict[name])
-
-        for person_idx in person_ids:
-            ax = fig.add_subplot(len(person_ids),1, int(person_idx))
-
-            for joint in selected_joints:
-                # get all 3d points of the joints over time
-                frame_ids, joint_3d_array = self.get_joint_series(joint, person_idx)
-                time_axis = frame_ids / float(self.fps)
-                ax.plot(frame_ids, joint_3d_array)
-
-                print(len(frame_ids)) # number of frames, in which the person was detected
-
-        # For Plotting
-        ax.set_xlabel("time [s]")
-        ax.set_ylabel("distance to camera in [mm]")
-        ax.title.set_text('test postion plotting')
-        signal_list = []
-        for s in selected_joints:
-            signal_list.append(f"{s}_X")
-            signal_list.append(f"{s}_Y")
-            signal_list.append(f"{s}_Z")
-        ax.legend(signal_list)
-
-        text = "debug"
-        plt.savefig(self.output_path + f"/{text}_joint_3d_position_subsampled.pdf")
-
-    def get_distance_two_points(self,joint_one, joint_two):
-        return np.linalg.norm(joint_one - joint_two)
-
-    def moving_average(self, x, w):
-        average = np.convolve(x, np.ones(w), 'same') / w
-        average[:w] = average[w] # TODO: check
-        average[-w:] = average[-w]
-        return average
-
-    def butter_lowpass(self, cutoff, fs, order=5):
-        return butter(order, cutoff, fs=fs, btype='low', analog=False)
-
-    def butter_lowpass_filter(self, data, cutoff, fs, order=5):
-        b, a = butter_lowpass(cutoff, fs, order=order)
-        y = lfilter(b, a, data)
-        return y
-
-    def closestPointToBox(self, q, origin, v100, v010, v001):
-        # distance of human hand joint to bounding boxes
-        # https://stackoverflow.com/questions/44824512/how-to-find-the-closest-point-on-a-right-rectangular-prism-3d-rectangle/44824522#44824522
-        # https://math.stackexchange.com/questions/2133217/minimal-distance-to-a-cube-in-2d-and-3d-from-a-point-lying-outside
-
-        # (Vector3 q, Vector3 origin, Vector3 v100, Vector3 v010, Vector3 v001)
-
-        px = v100
-        py = v010
-        pz = v001
-
-        vx = (px - origin)
-        vy = (py - origin)
-        vz = (pz - origin)
-
-        tx = np.dot( q - origin, vx ) / np.dot(vx,vx)
-        ty = np.dot( q - origin, vy ) / np.dot(vy,vy)
-        tz = np.dot( q - origin, vz ) / np.dot(vz,vz)
-
-        # tx = tx < 0 ? 0 : tx > 1 ? 1 : tx;
-        if tx < 0:
-            tx = 0
-        elif tx > 1:
-            tx = 1
-        # else:
-            # tx = tx
-        
-        # ty = ty < 0 ? 0 : ty > 1 ? 1 : ty;
-        if ty < 0:
-            ty = 0
-        elif ty > 1:
-            ty = 1
-        
-        # tz = tz < 0 ? 0 : tz > 1 ? 1 : tz;
-        if tz < 0:
-            tz = 0
-        elif tz > 1:
-            tz = 1
-
-        p = tx * vx + ty * vy + tz * vz + origin
-
-        return p
-
-    def get_distance_person_object(self, person_idx = '1', joint_name = 'R_Hand', obj=None, visualize=False):
-        if obj is None:
-            obj = self.pred_objects[0]
-        print("obj", obj)
-
-        det_obj = Detection9D(**obj)
-
-        tensor = det_obj.get_tensor()
-        boxes = CameraInstance3DBoxes([tensor], box_dim=9)
-        # TODO: subsample box by hardcoded semantic areas
-        boxes_corners = boxes.corners
-
-        origin = boxes_corners[0][3].numpy()
-        v100 = boxes_corners[0][7].numpy()
-        v010 = boxes_corners[0][0].numpy()
-        v001 = boxes_corners[0][2].numpy()
-
-        frame_ids, joint_3d_array = self.get_joint_series(joint_name, person_idx)
-
-        distances = []
-        for idx in range(len(frame_ids)):
-            queried_joint = joint_3d_array[idx]
-            q = queried_joint / 1000
-
-            p = self.closestPointToBox(q, origin, v100, v010, v001)
-            distance_human_object = np.linalg.norm(q - p)
-
-            distances.append(distance_human_object)
-
-        if visualize:
-            fig = plt.figure(figsize= [10, 10])
-            ax = fig.add_subplot(1,1,1)
-            ax.plot(frame_ids, distances)
-            interval_length = 1 # 1/float(self.fps)
-            for i in range(1,len(distances)):
-                if distances[i] < self.touch_threshold:
-                    plt.axvspan(frame_ids[i]-0.5*interval_length, frame_ids[i]+0.5*interval_length, color='g', alpha=0.2, lw=0)
-
-            ax.set_xlabel("n frames")
-            ax.set_ylabel("distance hand - bounding box [m]")
-            ax.title.set_text('test distance plotting')
-            text = "debug"
-            plt.savefig(self.output_path + f"/{text}_{joint_name}_joint_distance.pdf")
-
-        return distances
-
-    def get_initial_object_poses(self, bbox_frame_index=0):
-        # 3D bounding boxes assumed static
-        human_cars_dict = self.scene_frames_dict[str(bbox_frame_index)]
-        pred_objects = human_cars_dict["objects"]
-
-        print("Number of oriented bboxes: ", len(pred_objects))
-
-        return pred_objects
-
-    def get_human_keypoints(self):
-        pass
-
-    def get_initial_human_poses(self):
-        pass
-
-    def whatever(self):
-
-        human_object_dict_tmp = self.scene_frames_dict[str(bbox_frame_index)] # single frame, preselected
-        # reference frame 
-        pred_objects = human_object_dict_tmp["objects"] 
-        pred_humans = human_object_dict_tmp["humans"]
-
-        # get humans present in the selected frame
-        keypoint_ids, keypoint_list = zip(*pred_humans.items()) # TODO: also include human ids, which were not present in the selected frame
-
-        print("pred_objects", pred_objects)
-        print("pred_humans", pred_humans)
-
-        print("human_encoding", pred_humans['1'])
-
-    def get_initial_instructar(self):
-        pass
-
-    def sort_skeletons_to_ids(self):
-
-        # get list of human keypoints over all frames
-        keypoints_along_frames = []
-
-        self.frame_indices = list(self.scene_frames_dict.keys()) # real video indices
-
-        # get all human keypoints
-        for index in self.frame_indices:
-            keypoints_along_frames.append(self.scene_frames_dict[index]["humans"])
-            # list of dictionaries, indexed by person_id over all frames
-
-        keypoints_by_id = {}
-
-        for index, keypoints_dict in enumerate(keypoints_along_frames):
-            person_ids = list(keypoints_dict.keys())
-
-            for p_id in person_ids:
-                if p_id not in keypoints_by_id:
-                    keypoints_by_id[p_id] = []
-                
-                sdet = SkeletonDetection(idx=p_id, skeleton_param=keypoints_dict[p_id], time_step=self.frame_indices[index])
-                keypoints_by_id[p_id].append(sdet) 
-        
-        return keypoints_by_id
-
 class CLI():
     @staticmethod
     def detect_humans(mov_filename, mode, custom=True, landscape=False, fps_divisor=1, visualize=False):
         #camera_intrinsics = CameraIntrinsics()
         #trajectory = Trajectory(csv_filename)
 
-        print(custom)
-        print(landscape)
-        print(fps_divisor)
+        print("Custom", custom)
+        print("Landscape", landscape)
+        print("Fps_divisor", fps_divisor)
+        print("Visualize", visualize)
 
         video_frames = VideoFrames(mov_filename, flip=custom, landscape=landscape)
 
@@ -1307,7 +1043,7 @@ class CLI():
         # list of object 3d bounding boxes
 
     @staticmethod
-    def detect_cars(mov_filename, kitti=True, custom=True, landscape=False, fps_divisor=1, args_config=None, args_checkpoint=None, f_x=1445, f_y=1445, h=1440, w=1920, o_x=960, o_y=753):
+    def detect_cars(mov_filename, kitti=True, custom=True, landscape=False, fps_divisor=1, args_config=None, args_checkpoint=None, visualize=True, f_x=1445, f_y=1445, h=1440, w=1920, o_x=960, o_y=753):
         
         video_frames = VideoFrames(mov_filename, downsampling=1, throttle=1, flip=False, landscape=False, pad=[])
 
@@ -1387,10 +1123,10 @@ class CLI():
 
         perception7d = Perception()
         # todo: output without tracking of ab3dmot
-        tracked_detection_sequence = perception7d.track_3d_bbbox_sequence(video_frames, visualize=True, intrinsics=camera_intrinsics, file_name=mov_filename, args_config=args_config, args_checkpoint=args_checkpoint, fps_divisor=fps_divisor)
+        tracked_detection_sequence = perception7d.track_3d_bbbox_sequence(video_frames, visualize=visualize, intrinsics=camera_intrinsics, file_name=mov_filename, args_config=args_config, args_checkpoint=args_checkpoint, fps_divisor=fps_divisor)
 
     @staticmethod
-    def detect_objectron_objects(mov_filename, landscape=False, fps_divisor=1, args_config=None, args_checkpoint=None, fobject='bike', f_x=1492., f_y=1492., h=1920., w=1440., o_x=720., o_y=960.):
+    def detect_objectron_objects(mov_filename, landscape=False, fps_divisor=1, args_config=None, args_checkpoint=None, fobject='bike', visualize=True, f_x=1492., f_y=1492., h=1920., w=1440., o_x=720., o_y=960.):
         perception = Perception()
         if landscape:
             f_x=1445.
@@ -1405,7 +1141,7 @@ class CLI():
 
         camera_intrinsics = CameraIntrinsics(float(f_x), float(f_y), float(h), float(w), float(o_x), float(o_y))
 
-        perception.track_3d_bbbox_sequence(video_frames, visualize=True, score_threshold=-0.1, intrinsics=camera_intrinsics, file_name=mov_filename, args_config=args_config, args_checkpoint=args_checkpoint, fps_divisor=fps_divisor, focus_object=fobject)
+        perception.track_3d_bbbox_sequence(video_frames, visualize=visualize, score_threshold=-0.1, intrinsics=camera_intrinsics, file_name=mov_filename, args_config=args_config, args_checkpoint=args_checkpoint, fps_divisor=fps_divisor, focus_object=fobject)
 
     @staticmethod
     def visualize_cars(input_folder='./output3/20220818_032614-car_multi_person_1-cars', frame_index=0, f_x=1445, f_y=1445, h=1440, w=1920, o_x=960, o_y=753):
@@ -1691,9 +1427,6 @@ class CLI():
         # load car frames
 
         # load human frames
-
-    def get_root_joint():
-        pass
 
     @staticmethod
     def extract_keyframes(input_file='./output3/20220819_091024-car_multi_person_7-scene_frames.json', fps=60, bbox_frame_index=500):
@@ -2238,7 +1971,7 @@ class CLI():
             plt.savefig(output_path + "/human_object_distance.pdf")
 
     @staticmethod
-    def extract_keyframes_objectron(input_file='./output3/20220819_091024-car_multi_person_7-scene_frames.json', fps=60, bbox_frame_index=500, human_indices=[1,]):
+    def extract_keyframes_objectron(input_file='./output3/20220819_091024-car_multi_person_7-scene_frames.json', fps=60, bbox_frame_index=500, human_indices=[1,], frame_idx=0):
         
         with open(input_file, "rt") as file:
             scene_frames_dict = json.load(file)
@@ -2248,6 +1981,10 @@ class CLI():
         # selector.get_initial_object_poses()
         # selector.get_initial_human_poses()
         # selector.get_initial_instructar()
+
+
+
+        selector.test_semantics(frame_idx=frame_idx)
 
         selector.run_selection()
         
