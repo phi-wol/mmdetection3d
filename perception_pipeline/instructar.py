@@ -611,6 +611,12 @@ class Perception():
             args_checkpoint = './configs/smoke9D_2022_07_18_generalize_bike_multi_full_epoch_28.pth'
             self.det_id2str = {0: 'bike', 1:'chair', 2:'book'}
 
+        if args_config is None and focus_object == 'motorcycle':
+            args_config = './configs/smoke9D_objectron_generalize_full_ds_multigpu_bike_video.py'
+            args_checkpoint = './configs/smoke9D_2022_07_18_generalize_bike_multi_full_epoch_28.pth'
+            self.det_id2str = {0: 'bike', 1:'chair', 2:'book'}
+
+
         args_device = 'cuda:0'
 
         result_file = file_name.split("/")[-1].split(".")[0]
@@ -632,12 +638,17 @@ class Perception():
         detector = init_model(args_config, args_checkpoint, device=args_device)
         detector_first_stage_2d = Detector('det')
 
+        alternative = ""
+
         if focus_object == "bike":
             focus_object = "bicycle"
 
         focus_class_id = detector_first_stage_2d.get_detection_classes_list().index(focus_object)
 
         if focus_object == "bicycle":
+            focus_object = "bike"
+
+        if focus_object == "motorcycle":
             focus_object = "bike"
         
         if visualize: 
@@ -1710,11 +1721,6 @@ class CLI():
             ax.set_ylabel(f"[{joint_tmp}]joint velocity [m/s]")
             ax.title.set_text(f'{joint_tmp} Joint Velocity: Skeleton [{person_id}] | F:{wl}')
             ax.legend(['X', 'Y', 'Z','X_f', 'Y_f', 'Z_f', 'Velo', 'Velo_f'])
-
-
-
-
-            
 
             #ax.set_ylim([min( pelvic_pos_3d[:, 0]), 10000])
 

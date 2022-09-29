@@ -46,6 +46,32 @@ class TouchEvent():
     def to_dict(self) -> dict:
         pass
 
+class TouchEvent2():
+    def __init__(self, joint_name, feature_name, start_frame, end_frame) -> None:
+        self.joint_name = joint_name
+        self.feature_name = feature_name
+        # self.data = data # TODO: add skeleton parameters of current event
+        self.start_frame = start_frame
+        self.end_frame = end_frame
+        # self.end_time = end_time
+        # self.frame_nr = frame_nr
+
+    def update_event_time(self, end_frame):
+        self.end_frame = end_frame
+        self.event_duration = int((self.end_frame - self.start_frame)/2)
+        self.event_time = self.start_frame + self.event_duration
+        print("New Event detected: ", self.feature_name, self.event_duration)
+
+    def to_dict(self) -> dict:
+        pass
+
+class MovingEvent():
+    def __init__(self, joint_name, start_frame, end_frame) -> None:
+        self.joint_name = joint_name
+        # self.feature_name = feature_name
+        self.start_frame = start_frame
+        self.end_frame = end_frame
+
 class SkeletonDetection():
     def __init__(self, idx, skeleton_param, time_step):
         self.idx = idx
@@ -93,12 +119,12 @@ class ChairBox(SemanticBox):
         feature_list.append(pos_tmp)
 
         # L Handle
-        pos_tmp = corner_points[5] + 0.1 * (corner_points[4] - corner_points[5] )
+        pos_tmp = corner_points[5] + 1/3 * (corner_points[4] - corner_points[5] )
         pos_tmp += 0.5 * (corner_points[6] - corner_points[5]) #height
         feature_list.append(pos_tmp)
 
         # R Handle
-        pos_tmp = corner_points[1] + 0.1 * (corner_points[0] - corner_points[1])
+        pos_tmp = corner_points[1] + 1/3 * (corner_points[0] - corner_points[1])
         pos_tmp += 0.5 * (corner_points[2] - corner_points[1]) #height
         feature_list.append(pos_tmp)
 
@@ -109,6 +135,12 @@ class ChairBox(SemanticBox):
 class BikeBox(SemanticBox):
     # TODO: encode semantic feature points into the standard model of the box coordinates
 
+    # Simulate Semantics of Bicycle Safety Check: "M-CHECK"
+    # https://www.youtube.com/watch?v=B6CFPFdVz5E
+
+    # https://www.centurycycles.com/how-to/how-to-do-a-pre-ride-safety-check-pg1343.htm
+
+
     def __init__(self, tensor, box_dim=9):
         super().__init__(tensor, box_dim)
 
@@ -116,16 +148,20 @@ class BikeBox(SemanticBox):
         # when the model detects a touch interaction with the bounding box, 
         # the nearest feature point is calculated and returned as semantic representation for the event
         self.semantic_dict = {
-            0: "Saddle",
-            1: "L_Handlebar",
-            2: "R_Handlebar",
-            3: "F_Light",
-            4: "B_Light",
-            5: "L_Pedal",
-            6: "R_Pedal",
-            7: "F_Wheel",
-            8: "B_Wheel",
+            0: "Saddle",            # Character sits on bike
+            1: "L_Handlebar",       # Test the Brake
+            2: "R_Handlebar",       # Test the Brake / Ring the bell
+            3: "F_Light",           # Check Front Light
+            4: "B_Light",           # Check Back Light
+            5: "L_Pedal",           # "Turn" Left Pedale - Chain
+            6: "R_Pedal",           # "Turn" Right Pedale
+            7: "F_Wheel",           # Check Front Tire Air Pressure for proper inflation and treads (excessive wear)
+            8: "B_Wheel",           # Check Front Tire Air Pressure
+
+            # wheel quick release levers
         }
+
+        # check for rotating movements
 
     def get_semantic_feature_points(self):
 
@@ -280,8 +316,14 @@ class KeyFrameSelector():
 
         self.touch_threshold = 0.1
 
+        self.down_sampling = 1 # TODO: additional down_sampling needed?
+
+    def extract_chair_events(self):
+        self.pred_objects = self.get_initial_objects(bbox_frame_index=0)
+
+
     def run_selection(self):
-        self.pred_objects = self.get_initial_object_poses(bbox_frame_index=0)
+        self.pred_objects = self.get_initial_objects(bbox_frame_index=0)
 
         self.keypoints_by_id = self.sort_skeletons_to_ids()
 
@@ -293,7 +335,24 @@ class KeyFrameSelector():
 
         distances = self.get_distance_person_object(person_idx = '1', joint_name = 'Pelvis', obj=self.pred_objects[0], visualize=True)
 
-        #velocity = self.get_joint_velocity(person_idx = '1', joint_name = 'L_Hand') 
+        obj=self.pred_objects[0]
+        self.semantic_box = self.get_semantic_box(obj_dict=obj)
+        self.feature_points = self.semantic_box.get_semantic_feature_points()
+
+        distances = self.get_distance_person_feature_points(person_idx = '1', joint_name = 'L_Hand', visualize=True)
+
+        distances = self.get_distance_person_feature_points(person_idx = '1', joint_name = 'R_Hand', visualize=True)
+
+        distances = self.get_distance_person_feature_points(person_idx = '1', joint_name = 'Pelvis', visualize=True)
+
+        velocities = self.get_joint_velocity(person_idx = '1', joint_name = 'Pelvis', visualize=True, threshold=0.25)
+
+        velocities = self.get_joint_velocity(person_idx = '1', joint_name = 'R_Hand', visualize=True, threshold=0.25)
+
+        velocities = self.get_joint_velocity(person_idx = '1', joint_name = 'L_Hand', visualize=True, threshold=0.25)
+
+    def run_selection_bike(self):
+        pass
 
     def get_joint_series(self, selected_joint='R_Hand', person_idx='1', smoothing=None):
         
@@ -306,10 +365,7 @@ class KeyFrameSelector():
 
         if smoothing == "average": # moving average
             kernel_size = 10
-            for i in range(3):
-                # print(joint_3d_array[i])
-                joint_3d_array[:, i] = self.smooth(x=joint_3d_array[:, i], window_len=kernel_size)
-        # elif smoothing == "bwf": # butterworth filter
+            joint_3d_array = self.smooth_3d(array_3d=joint_3d_array, window_len=kernel_size)
 
         return frame_ids, joint_3d_array
 
@@ -362,7 +418,6 @@ class KeyFrameSelector():
         # average[-w:] = average[-w]
         return average
 
-    
     def smooth(self, x,window_len=11,window='flat'):
         # https://scipy-cookbook.readthedocs.io/items/SignalSmooth.html
         """smooth the data using a window with requested size.
@@ -419,6 +474,13 @@ class KeyFrameSelector():
 
         y=np.convolve(w/w.sum(),s,mode='valid')
         return y[int(window_len/2-1):-int(window_len/2)]
+
+    def smooth_3d(self, array_3d, window_len=11, window='flat'):
+        array_smoothed = array_3d.copy()
+        for i in range(3):
+            array_smoothed[:, i] = self.smooth(x=array_3d[:, i], window_len=window_len, window=window)
+
+        return array_smoothed
 
     def butter_lowpass(self, cutoff, fs, order=5):
         return butter(order, cutoff, fs=fs, btype='low', analog=False)
@@ -551,48 +613,124 @@ class KeyFrameSelector():
 
         return distances
 
-    def get_distance_person_feature(self, person_idx = '1', joint_name = 'R_Hand', features=None, visualize=False):
-
-        det_obj = Detection9D(**obj)
-
-        tensor = det_obj.get_tensor()
-        boxes = CameraInstance3DBoxes([tensor], box_dim=9)
-        # TODO: subsample box by hardcoded semantic areas
-        boxes_corners = boxes.corners
-
-        origin = boxes_corners[0][3].numpy()
-        v100 = boxes_corners[0][7].numpy()
-        v010 = boxes_corners[0][0].numpy()
-        v001 = boxes_corners[0][2].numpy()
+    def get_intervals(self, arr, threshold):
+        ranges = np.where(np.diff(arr < threshold, prepend=0, append=0))[0].reshape(-1, 2)
+        ranges[:, 1] -= 1
+        return ranges
+        
+    def get_joint_velocity(self, joint_name='Pelvis', person_idx='1', visualize=False, threshold=0.25):
 
         frame_ids, joint_3d_array = self.get_joint_series(joint_name, person_idx)
 
-        distances = []
-        for idx in range(len(frame_ids)):
-            queried_joint = joint_3d_array[idx]
-            q = queried_joint / 1000
+        positions_smoothed = self.smooth_3d(array_3d=joint_3d_array/1000,window_len=60,window='flat')
 
-            p = self.closestPointToBox(q, origin, v100, v010, v001)
-            distance_human_object = np.linalg.norm(q - p)
+        pos_diffs = np.diff(positions_smoothed, n=1, axis=0)
+        sampling_n = 30
+        pos_diffs_sampled = np.diff(positions_smoothed[::sampling_n], n=1, axis=0)
 
-            distances.append(distance_human_object)
+        time_delta = 1/self.fps # * self.down_sampling
+
+        velos = np.linalg.norm(pos_diffs, axis=1) / time_delta
+        velos_sampled = np.linalg.norm(pos_diffs_sampled, axis=1) / (time_delta * sampling_n)
+
+        # velos = self.smooth()
+
+        intervals = self.get_intervals(-1*velos, -1*threshold)
+        min_event_duration = 25
+
+        event_list = []
+        [event_list.append(MovingEvent(joint_name, interval[0], interval[1])) for interval in intervals if interval[1] - interval[0] > min_event_duration]
 
         if visualize:
-            fig = plt.figure(figsize= [10, 10])
+            
+            fig = plt.figure(figsize= [20, 10])
             ax = fig.add_subplot(1,1,1)
-            ax.plot(frame_ids, distances)
-            interval_length = 1 # 1/float(self.fps)
-            for i in range(1,len(distances)):
-                if distances[i] < self.touch_threshold:
-                    plt.axvspan(frame_ids[i]-0.5*interval_length, frame_ids[i]+0.5*interval_length, color='g', alpha=0.2, lw=0)
+            legend = []
+            
+            ax.plot(frame_ids[1:], velos)
+            ax.plot(frame_ids[::sampling_n][1:], velos_sampled)
+            
+            # legend.append(self.semantic_box.semantic_dict[feat])
+
+            for event in event_list:
+                plt.axvspan(event.start_frame, event.end_frame, color='g', alpha=0.2, lw=0) # for plotting
+                event_time = (event.end_frame - event.start_frame) / 2 + event.start_frame
+                ax.annotate("Moving", xy=(event_time, 0.25))
+                
+            ax.set_xlabel("n frames")
+            ax.set_ylabel("joint veloctiy [m/s]")
+            ax.title.set_text('test velocity plotting')
+            text = "debug"
+            ax.legend(legend)
+            plt.savefig(self.output_path + f"/{text}_{joint_name}_joint_velocity.pdf")
+
+    def get_distance_person_feature_points(self, person_idx = '1', joint_name = 'R_Hand', visualize=False, threshold=0.25):
+
+        frame_ids, joint_3d_array = self.get_joint_series(joint_name, person_idx)
+        
+        # semantic_box = self.get_semantic_box(obj_dict=obj)
+        # feature_points = semantic_box.get_semantic_feature_points()
+
+        feature_distances = {}
+
+        # check distance for every feature point: 
+
+        print("joint_3d_array", joint_3d_array.shape)
+        print("self.feature_points:", self.feature_points.shape)
+
+        event_list = []
+        n_feat = len(self.semantic_box.semantic_dict.keys())
+        #print("N-feat: ", n_feat)
+        for feat_idx in range(n_feat):
+
+            f_name = self.semantic_box.semantic_dict[feat_idx]
+
+            distances = []
+           
+            diff = joint_3d_array/1000 - self.feature_points[feat_idx]
+            #print('diff.shape', diff.shape)
+            distances = np.linalg.norm(diff, axis=1)
+            #print('distances.shape', distances.shape)
+
+            distances_smoothed = self.smooth(x=distances,window_len=60,window='flat')
+
+            # TODO: Refactor Event Extraction: needed several times self.extract_events(...)
+            intervals = self.get_intervals(distances_smoothed, threshold)
+            print(f_name, "intervals", intervals)
+            
+            min_event_duration = 25
+            
+            [event_list.append(TouchEvent2(joint_name, f_name, interval[0], interval[1])) for interval in intervals if interval[1] - interval[0] > min_event_duration]
+
+            feature_distances[feat_idx] = distances_smoothed
+
+        # filter events for semantically not necessary events
+        event_list = [event for event in event_list if not (("Hand" in event.joint_name) and event.feature_name == "Seat")]
+
+        if visualize:
+
+            fig = plt.figure(figsize= [20, 10])
+            ax = fig.add_subplot(1,1,1)
+            legend = []
+            for feat in range(n_feat):
+                ax.plot(frame_ids, feature_distances[feat])
+                legend.append(self.semantic_box.semantic_dict[feat])
+
+            for event in event_list:
+                
+                plt.axvspan(event.start_frame, event.end_frame, color='g', alpha=0.2, lw=0) # for plotting
+                event_time = (event.end_frame - event.start_frame) / 2 + event.start_frame
+                ax.annotate(event.feature_name, xy=(event_time, 0.25))
+            
 
             ax.set_xlabel("n frames")
-            ax.set_ylabel("distance hand - bounding box [m]")
+            ax.set_ylabel("distance hand - feature point [m]")
             ax.title.set_text('test distance plotting')
             text = "debug"
-            plt.savefig(self.output_path + f"/{text}_{joint_name}_joint_distance.pdf")
+            ax.legend(legend)
+            plt.savefig(self.output_path + f"/{text}_{joint_name}_joint_distance_2_feat.pdf")
 
-        return distances
+        return event_list
 
     def encode_snap_points_for_bbox(self, obj):
         pass
@@ -600,7 +738,7 @@ class KeyFrameSelector():
     def get_closest_snap_to_joint():
         pass
 
-    def get_initial_object_poses(self, bbox_frame_index=0):
+    def get_initial_objects(self, bbox_frame_index=0):
         # 3D bounding boxes assumed static
         human_cars_dict = self.scene_frames_dict[str(bbox_frame_index)]
         if "objects" in human_cars_dict:
@@ -674,7 +812,7 @@ class KeyFrameSelector():
     def test_semantics_series(self, focus_idx=0):
 
         # all objects in the respective frames
-        self.pred_objects = self.get_initial_object_poses(bbox_frame_index=focus_idx)
+        self.pred_objects = self.get_initial_objects(bbox_frame_index=focus_idx)
 
         self.keypoints_by_id = self.sort_skeletons_to_ids()
         
@@ -690,7 +828,7 @@ class KeyFrameSelector():
     def test_semantics(self, frame_idx=0, focus_idx=0):
         
         # all objects in the respective frames
-        self.pred_objects = self.get_initial_object_poses(bbox_frame_index=focus_idx)
+        self.pred_objects = self.get_initial_objects(bbox_frame_index=focus_idx)
 
         self.keypoints_by_id = self.sort_skeletons_to_ids()
         
