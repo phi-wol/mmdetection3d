@@ -14,9 +14,16 @@ import cv2
 from .ab3dmot.AB3DMOT_libs.mmdet.cam_box3d import CameraInstance3DBoxes
 import matplotlib.pyplot as plt
 
+import json
+
+# JSON Serialization
+def _to_dict(obj):
+    return obj.to_dict()
+
 class Event():
-    def __init__(self, event_type, data, time_stamp, frame_nr) -> None:
+    def __init__(self, event_type, object_id, data, time_stamp, frame_nr) -> None:
         self.type = event_type
+        self.object_id = object_id
         self.time_stamp = time_stamp
         self.event_data = data
         self.frame_nr = frame_nr
@@ -24,6 +31,7 @@ class Event():
     def to_dict(self) -> dict:
         return {
             "type": self.type,
+            "object_id": self.object_id,
             "time_stamp": self.time_stamp,
             "event_data": self.event_data,
             "frame_nr": self.frame_nr
@@ -56,11 +64,8 @@ class TouchEvent2():
         # self.end_time = end_time
         # self.frame_nr = frame_nr
 
-    def update_event_time(self, end_frame):
-        self.end_frame = end_frame
         self.event_duration = int((self.end_frame - self.start_frame)/2)
         self.event_time = self.start_frame + self.event_duration
-        print("New Event detected: ", self.feature_name, self.event_duration)
 
     def to_dict(self) -> dict:
         pass
@@ -319,11 +324,69 @@ class KeyFrameSelector():
         self.down_sampling = 1 # TODO: additional down_sampling needed?
 
     def extract_chair_events(self):
-        self.pred_objects = self.get_initial_objects(bbox_frame_index=0)
+        event_log = {}
 
+        # load first (and only) object pose - assumed static
+        self.pred_objects = self.get_initial_objects(bbox_frame_index=0)
+        object_poses = self.get_initial_object_events()
+        event_log["object_poses"] = object_poses
+
+        self.keypoints_by_id = self.sort_skeletons_to_ids()
+       
+        human_poses=[]
+
+        # get initial human poses:
+        for person_idx in self.keypoints_by_id.keys():
+            
+            human_det = self.keypoints_by_id[person_idx][0]
+            skeleton_param = human_det.skeleton_param
+            time_step = human_det.time_step
+
+            print("time_step", time_step)
+            print(type(time_step))
+
+            # encode event
+            event = Event(
+                event_type='initial_human',
+                object_id=person_idx, 
+                data=skeleton_param, # TODO: list?
+                time_stamp=time_step/self.fps,
+                frame_nr=time_step
+                )
+
+            human_poses.append(event)
+
+        person_idx = '1'
+        joints = ["L_Hand", "R_Hand", "Pelvis"]
+        for j in joints:
+            touch_events = self.get_distance_person_feature_points(person_idx = person_idx, joint_name = j, visualize=True)
+            # TODO: transform TouchEvents() into normal json Events()
+            for tevent in touch_events: 
+                frame_index = tevent.event_time 
+                event_type = tevent.joint_name + '_' + tevent.feature_name
+                
+                human_det = self.keypoints_by_id[person_idx][frame_index]
+                skeleton_param = human_det.skeleton_param
+                time_step = human_det.time_step
+                json_event = Event(
+                    event_type=event_type,
+                    object_id=person_idx, 
+                    data=skeleton_param, # TODO: list?
+                    time_stamp=time_step/self.fps,
+                    frame_nr=time_step
+                )
+                human_poses.append(json_event)
+
+        event_log["human_poses"] = human_poses
+
+        save_path = self.output_path + '/' + self.output_path.split('/')[-1] + ".json"
+
+        with open(save_path, "wt") as file:
+            json.dump(event_log, file, default=_to_dict) 
 
     def run_selection(self):
         self.pred_objects = self.get_initial_objects(bbox_frame_index=0)
+        self.pred_object_poses = self.get_initial_object_events()
 
         self.keypoints_by_id = self.sort_skeletons_to_ids()
 
@@ -339,11 +402,11 @@ class KeyFrameSelector():
         self.semantic_box = self.get_semantic_box(obj_dict=obj)
         self.feature_points = self.semantic_box.get_semantic_feature_points()
 
-        distances = self.get_distance_person_feature_points(person_idx = '1', joint_name = 'L_Hand', visualize=True)
+        events = self.get_distance_person_feature_points(person_idx = '1', joint_name = 'L_Hand', visualize=True)
 
-        distances = self.get_distance_person_feature_points(person_idx = '1', joint_name = 'R_Hand', visualize=True)
+        events = self.get_distance_person_feature_points(person_idx = '1', joint_name = 'R_Hand', visualize=True)
 
-        distances = self.get_distance_person_feature_points(person_idx = '1', joint_name = 'Pelvis', visualize=True)
+        events = self.get_distance_person_feature_points(person_idx = '1', joint_name = 'Pelvis', visualize=True)
 
         velocities = self.get_joint_velocity(person_idx = '1', joint_name = 'Pelvis', visualize=True, threshold=0.25)
 
@@ -351,8 +414,7 @@ class KeyFrameSelector():
 
         velocities = self.get_joint_velocity(person_idx = '1', joint_name = 'L_Hand', visualize=True, threshold=0.25)
 
-    def run_selection_bike(self):
-        pass
+        return self.extract_chair_events()
 
     def get_joint_series(self, selected_joint='R_Hand', person_idx='1', smoothing=None):
         
@@ -732,12 +794,6 @@ class KeyFrameSelector():
 
         return event_list
 
-    def encode_snap_points_for_bbox(self, obj):
-        pass
-    
-    def get_closest_snap_to_joint():
-        pass
-
     def get_initial_objects(self, bbox_frame_index=0):
         # 3D bounding boxes assumed static
         human_cars_dict = self.scene_frames_dict[str(bbox_frame_index)]
@@ -748,6 +804,24 @@ class KeyFrameSelector():
         print("Number of oriented bboxes: ", len(pred_objects))
 
         return pred_objects
+
+    def get_initial_object_events(self): 
+        
+        event_list = []
+        for idx, obj in enumerate(self.pred_objects):
+            semantic_box = self.get_semantic_box(obj_dict=obj)
+            
+            event_tmp = Event(
+                event_type= "initial_box",
+                object_id=idx, 
+                data = semantic_box.tensor[0].tolist(),
+                time_stamp=0,
+                frame_nr=0
+                )
+
+            event_list.append(event_tmp)
+
+        return event_list
 
     def get_object_series(self, object_idx=0):
         # if not assumed static
@@ -787,7 +861,7 @@ class KeyFrameSelector():
                 if p_id not in keypoints_by_id:
                     keypoints_by_id[p_id] = []
                 
-                sdet = SkeletonDetection(idx=p_id, skeleton_param=keypoints_dict[p_id], time_step=self.frame_indices[index])
+                sdet = SkeletonDetection(idx=p_id, skeleton_param=keypoints_dict[p_id], time_step=int(self.frame_indices[index]))
                 keypoints_by_id[p_id].append(sdet) 
         
         return keypoints_by_id
@@ -820,10 +894,6 @@ class KeyFrameSelector():
         r_hand = np.array(joint_3d_array[frame_idx]) / 1000
         frame_ids_l, joint_3d_array = self.get_joint_series(selected_joint='L_Hand', person_idx='1')
         l_hand = np.array(joint_3d_array[frame_idx]) / 1000
-
-        
-    def test_moving_events(self, focus_idx=0, person_idx='1'):
-        pass
 
     def test_semantics(self, frame_idx=0, focus_idx=0):
         

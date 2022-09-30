@@ -1990,23 +1990,25 @@ class CLI():
 
 
 
-        selector.test_semantics(frame_idx=frame_idx)
 
-        selector.run_selection()
+        event_log = selector.run_selection()
         
-        window_length = 60
-        down_sampling = 60
-        interval_length = 1 / fps * down_sampling
+        # selector.test_semantics(frame_idx=frame_idx)
 
-        event_log = []
-        event_log_dict = {
-            "initial_human_pose": [],
-            "initial_object_pose": [],
-            "person_starts_moving": [],
-            "person_stops_moving": [],
-            "hand_clap": []
-        }
+        
+        
+        # window_length = 60
+        # down_sampling = 60
+        # interval_length = 1 / fps * down_sampling
 
+        # event_log = []
+        # event_log_dict = {
+        #     "initial_human_pose": [],
+        #     "initial_object_pose": [],
+        #     "person_starts_moving": [],
+        #     "person_stops_moving": [],
+        #     "hand_clap": []
+        # }
 
         print(event_log)
 
