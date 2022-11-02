@@ -1439,6 +1439,7 @@ class CLI():
 
         # load human frames
 
+    # deprecated
     @staticmethod
     def extract_keyframes(input_file='./output3/20220819_091024-car_multi_person_7-scene_frames.json', fps=60, bbox_frame_index=500):
         
@@ -1989,10 +1990,10 @@ class CLI():
         # selector.get_initial_instructar()
 
 
-
-
-        event_log = selector.run_selection()
         
+        
+        event_log = selector.run_selection()
+
         # selector.test_semantics(frame_idx=frame_idx)
 
         

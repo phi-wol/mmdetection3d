@@ -289,6 +289,12 @@ class CarBox(SemanticBox):
     def get_semantic_feature_points(self):
         pass
 
+class KeyFrameVisualizer(KeyFrameSelector):
+    def __init__(self, input_file, scene_frames_dict=None, fps=60) -> None:
+        super().__init__(input_file, scene_frames_dict, fps)
+
+    
+
 class KeyFrameSelector():
 
     # snap point: semantic feature points of bounding box 
@@ -353,7 +359,7 @@ class KeyFrameSelector():
                 time_stamp=time_step/self.fps,
                 frame_nr=time_step
                 )
-
+        
             human_poses.append(event)
 
         person_idx = '1'

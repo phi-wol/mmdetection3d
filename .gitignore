@@ -160,3 +160,8 @@ tmp
 viz/
 
 *.pickle
+
+output2/
+output3/
+output4/
+extracted_keyframes/
